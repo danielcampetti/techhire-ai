@@ -12,7 +12,14 @@ from src.agents.data_agent import DataAgent
 from src.agents.knowledge_agent import KnowledgeAgent
 from src.database.connection import get_db
 from src.database.seed import init_db
+from src.governance import audit
+from src.governance.pii_detector import detect_pii, has_pii
 from src.llm import llm_router
+
+_LGPD_FOOTER = (
+    "\n\n---\n🔒 Esta resposta contém dados pessoais protegidos pela LGPD. "
+    "Uso restrito a fins de compliance."
+)
 
 _ROUTING_PROMPT = """\
 Você é um roteador de agentes de compliance financeiro. Classifique a intenção da pergunta.
@@ -69,14 +76,19 @@ class CoordinatorAgent:
         Args:
             question: Natural language question in Portuguese.
             provider: LLM backend — "ollama" (default) or "claude".
+            user_id: Authenticated user ID for audit logging.
+            username: Authenticated username for audit logging.
+            conversation_history: Prior conversation messages for context.
 
         Returns:
             CoordinatorResponse with the final answer and routing metadata.
         """
         init_db()
+        session_id = audit.generate_session_id()
         routing = await self._classify(question, provider=provider)
         details: list[dict] = []
         agents_used: list[str] = []
+        model = "claude-sonnet-4-6" if provider == "claude" else "llama3:8b"
 
         if routing == "KNOWLEDGE":
             response = await self.knowledge_agent.answer(question, provider=provider)
@@ -84,17 +96,50 @@ class CoordinatorAgent:
             agents_used.append("knowledge")
             final = response.answer
 
+            pii_found = bool(detect_pii(response.answer)) or has_pii(question)
+            log_id = await audit.log_interaction(
+                session_id=session_id, agent_name="knowledge", action="answer",
+                input_text=question, output_text=response.answer,
+                provider=provider, model=model, tokens_used=0,
+                chunks_count=getattr(response, "chunks_count", 0),
+                user_id=user_id, username=username,
+            )
+            classification = audit.classify_query("knowledge", pii_found, question)
+
         elif routing == "DATA":
             response = await self.data_agent.answer(question, provider=provider)
             details.append(_to_detail(response))
             agents_used.append("data")
             final = response.answer
 
+            pii_found = bool(detect_pii(response.answer)) or has_pii(question)
+            if pii_found:
+                final = final + _LGPD_FOOTER
+
+            log_id = await audit.log_interaction(
+                session_id=session_id, agent_name="data", action="answer",
+                input_text=question, output_text=response.answer,
+                provider=provider, model=model, tokens_used=0,
+                chunks_count=getattr(response, "chunks_count", 0),
+                user_id=user_id, username=username,
+            )
+            classification = audit.classify_query("data", pii_found, question)
+
         elif routing == "ACTION":
             response = await self.action_agent.answer(question)
             details.append(_to_detail(response))
             agents_used.append("action")
             final = response.answer
+
+            pii_found = bool(detect_pii(response.answer)) or has_pii(question)
+            log_id = await audit.log_interaction(
+                session_id=session_id, agent_name="action", action="answer",
+                input_text=question, output_text=response.answer,
+                provider=provider, model=model, tokens_used=0,
+                chunks_count=getattr(response, "chunks_count", 0),
+                user_id=user_id, username=username,
+            )
+            classification = audit.classify_query("action", pii_found, question)
 
         else:  # KNOWLEDGE+DATA
             k_resp = await self.knowledge_agent.answer(question, provider=provider)
@@ -108,7 +153,31 @@ class CoordinatorAgent:
                 f"**Análise de Dados:**\n{d_resp.answer}"
             )
 
-        log_id = self._log(question, routing, final)
+            pii_found = bool(detect_pii(final)) or has_pii(question)
+            if pii_found:
+                final = final + _LGPD_FOOTER
+
+            await audit.log_interaction(
+                session_id=session_id, agent_name="knowledge", action="answer",
+                input_text=question, output_text=k_resp.answer,
+                provider=provider, model=model, tokens_used=0,
+                chunks_count=getattr(k_resp, "chunks_count", 0),
+                user_id=user_id, username=username,
+            )
+            log_id = await audit.log_interaction(
+                session_id=session_id, agent_name="data", action="answer",
+                input_text=question, output_text=d_resp.answer,
+                provider=provider, model=model, tokens_used=0,
+                chunks_count=getattr(d_resp, "chunks_count", 0),
+                user_id=user_id, username=username,
+            )
+            k_class = audit.classify_query("knowledge", pii_found, question)
+            d_class = audit.classify_query("data", pii_found, question)
+            _order = ["public", "internal", "confidential", "restricted"]
+            classification = (
+                k_class if _order.index(k_class) >= _order.index(d_class) else d_class
+            )
+
         return CoordinatorResponse(
             pergunta=question,
             roteamento=routing,
@@ -117,6 +186,9 @@ class CoordinatorAgent:
             detalhes_agentes=details,
             log_id=log_id,
             provider_utilizado=provider,
+            pii_detected=pii_found,
+            data_classification=classification,
+            session_id=session_id,
         )
 
     async def _classify(self, question: str, provider: str = "ollama") -> str:
