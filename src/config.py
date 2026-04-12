@@ -3,6 +3,7 @@
 All values can be overridden via environment variables or a .env file.
 """
 from pathlib import Path
+from typing import Optional
 
 from pydantic_settings import BaseSettings
 
@@ -13,6 +14,9 @@ class Settings(BaseSettings):
     # Paths
     data_raw_dir: Path = Path("data/raw")
     chroma_db_path: str = "./chroma_db"
+
+    # Database
+    db_path: str = "./data/compliance.db"
 
     # Embedding model (local, no API key required)
     embedding_model: str = "all-MiniLM-L6-v2"
@@ -25,8 +29,8 @@ class Settings(BaseSettings):
     chunk_overlap: int = 100
 
     # Retrieval parameters
-    retrieval_top_k: int = 20
-    rerank_top_k: int = 5
+    retrieval_top_k: int = 50
+    rerank_top_k: int = 20
 
     # Ollama connection
     ollama_url: str = "http://localhost:11434"
@@ -34,6 +38,13 @@ class Settings(BaseSettings):
 
     # ChromaDB collection name
     collection_name: str = "compliance_docs"
+
+    # LLM provider selection: "ollama" or "claude"
+    llm_provider: str = "ollama"
+
+    # Claude / Anthropic settings
+    claude_model: str = "claude-sonnet-4-6"
+    anthropic_api_key: Optional[str] = None
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
