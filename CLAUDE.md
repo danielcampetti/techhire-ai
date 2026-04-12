@@ -100,7 +100,8 @@ PII masking (LGPD), structured logging, automated RAG evals, GitHub Actions CI/C
 - **Local-first:** Zero cloud dependency. Ollama for LLM, sentence-transformers for embeddings.
 - **ChromaDB over Pinecone/Weaviate:** No API key, no network latency, portable.
 - **Cross-encoder reranking:** Retrieves top-50, reranks to top-20. Better precision than pure vector search.
-- **Reranker bypass:** When a named regulation has ≤30 chunks, all chunks are sent directly to the LLM (skipping reranking). Fixes precision loss for small documents with English-trained cross-encoder.
+- **Reranker bypass:** When a named regulation has ≤30 chunks, all chunks are sent directly to the LLM (skipping reranking). Used for small documents where the reranker may compress results too aggressively.
+- **Multilingual reranker:** Uses `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` (trained on mMARCO multilingual data including Brazilian Portuguese). Switched from the English-only `ms-marco-MiniLM-L-6-v2` after benchmark showed it discarded correct Portuguese chunks.
 - **Portuguese prompts:** All system prompts, error messages, and API responses are in Brazilian Portuguese.
 - **Pydantic Settings:** All config from environment variables with `.env` file support.
 
@@ -205,3 +206,29 @@ python -m src.evaluation.benchmark --limit 3  # first 3 only
 ```
 
 `POST /chat` accepts an optional `"provider": "claude"` field to route a single request to Claude instead of Ollama.
+
+## RAG Quality Improvements (Benchmark-Driven)
+
+**Benchmark baseline (before fixes):** 4/15 passed (27%), avg score 4.2/10
+
+### Fix 1 — Multilingual Reranker
+Switched from `cross-encoder/ms-marco-MiniLM-L-6-v2` (English-only, ~90MB) to
+`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` (multilingual mMARCO, ~480MB).
+
+The English reranker scored Portuguese legal text by surface keyword overlap, not
+semantic similarity — discarding the correct regulatory chunks before they reached
+the LLM. The mMARCO model was trained on translated multilingual data that includes
+Brazilian Portuguese.
+
+No re-indexing required — the reranker operates at query time only.
+
+### Fix 2 — Hardened Prompt Template
+Replaced the prompt in `src/retrieval/prompt_builder.py` with 6 explicit rules:
+- Explicit "NUNCA invente informações" hallucination ban
+- Rule to copy monetary values, dates, and percentages EXACTLY from chunks
+- Self-check instruction: re-read chunks before answering
+- Clearer chunk numbering with `[Trecho N]` and structured sections
+
+### Results
+Run `python -m src.evaluation.benchmark` to compare against the baseline.
+Latest report: `data/benchmark_report.json`
