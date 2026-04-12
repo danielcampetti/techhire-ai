@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import AsyncGenerator, Optional
 
 from pydantic import BaseModel
 
@@ -198,6 +198,180 @@ class CoordinatorAgent:
             data_classification=classification,
             session_id=session_id,
         )
+
+    async def process_stream(
+        self,
+        question: str,
+        provider: str = "ollama",
+        user_id: Optional[int] = None,
+        username: Optional[str] = None,
+        conversation_history: Optional[list[dict]] = None,
+    ) -> AsyncGenerator[str, None]:
+        """Stream the agent response as SSE events.
+
+        Yields SSE-formatted strings for each event:
+        - metadata: routing info, sent first
+        - sources: chunk references (KNOWLEDGE routes only)
+        - token: individual LLM tokens (KNOWLEDGE streams one-by-one;
+                 DATA/ACTION send a single token with the full answer)
+        - sql: SQL details (DATA agent only)
+        - actions: action list (ACTION agent only)
+        - done: final metadata including full_response for persistence
+        - error: on exception
+
+        Args:
+            question: Natural language question in Portuguese.
+            provider: LLM backend — "ollama" (default) or "claude".
+            user_id: Authenticated user ID for audit logging.
+            username: Authenticated username for audit logging.
+            conversation_history: Prior conversation messages for context injection.
+        """
+        import json as _json
+
+        init_db()
+        session_id = audit.generate_session_id()
+        routing = await self._classify(question, provider=provider)
+        model = "claude-sonnet-4-6" if provider == "claude" else "llama3:8b"
+
+        _route_agents = {
+            "KNOWLEDGE": ["knowledge"],
+            "DATA": ["data"],
+            "ACTION": ["action"],
+            "KNOWLEDGE+DATA": ["knowledge", "data"],
+        }
+        agents_used = _route_agents.get(routing, ["knowledge"])
+
+        yield f'data: {_json.dumps({"type": "metadata", "roteamento": routing, "agentes_utilizados": agents_used})}\n\n'
+
+        try:
+            if routing == "KNOWLEDGE":
+                prompt, chunks = await self.knowledge_agent.prepare(
+                    question, conversation_history=conversation_history
+                )
+
+                if prompt is None:
+                    msg = "Nenhum documento relevante encontrado para esta pergunta."
+                    yield f'data: {_json.dumps({"type": "token", "content": msg})}\n\n'
+                    yield f'data: {_json.dumps({"type": "done", "pii_detected": False, "data_classification": "public", "session_id": session_id, "full_response": msg})}\n\n'
+                    return
+
+                sources = list({
+                    f"{c.metadata.get('source', 'Desconhecido')}, p. {c.metadata.get('page', '?')}"
+                    for c in chunks
+                })
+                yield f'data: {_json.dumps({"type": "sources", "chunks": sources})}\n\n'
+
+                full_response = ""
+                async for token in llm_router.generate_stream(prompt, provider=provider):
+                    full_response += token
+                    yield f'data: {_json.dumps({"type": "token", "content": token})}\n\n'
+
+                pii_found = bool(detect_pii(full_response)) or has_pii(question)
+                await audit.log_interaction(
+                    session_id=session_id, agent_name="knowledge",
+                    action="stream_answer", input_text=question,
+                    output_text=full_response, provider=provider, model=model,
+                    tokens_used=0, chunks_count=len(chunks),
+                    user_id=user_id, username=username,
+                )
+                classification = audit.classify_query("knowledge", pii_found, question)
+                yield f'data: {_json.dumps({"type": "done", "pii_detected": pii_found, "data_classification": classification, "session_id": session_id, "full_response": full_response})}\n\n'
+
+            elif routing == "DATA":
+                response = await self.data_agent.answer(question, provider=provider)
+                yield f'data: {_json.dumps({"type": "token", "content": response.answer})}\n\n'
+
+                if response.data and response.data.get("sql"):
+                    yield f'data: {_json.dumps({"type": "sql", "sql": response.data.get("sql"), "total": response.data.get("total")})}\n\n'
+
+                pii_found = bool(detect_pii(response.answer)) or has_pii(question)
+                await audit.log_interaction(
+                    session_id=session_id, agent_name="data",
+                    action="stream_answer", input_text=question,
+                    output_text=response.answer, provider=provider, model=model,
+                    tokens_used=0, chunks_count=0,
+                    user_id=user_id, username=username,
+                )
+                classification = audit.classify_query("data", pii_found, question)
+                yield f'data: {_json.dumps({"type": "done", "pii_detected": pii_found, "data_classification": classification, "session_id": session_id, "full_response": response.answer})}\n\n'
+
+            elif routing == "ACTION":
+                response = await self.action_agent.answer(question)
+                yield f'data: {_json.dumps({"type": "token", "content": response.answer})}\n\n'
+
+                if response.actions_taken:
+                    yield f'data: {_json.dumps({"type": "actions", "acoes": response.actions_taken})}\n\n'
+
+                pii_found = bool(detect_pii(response.answer)) or has_pii(question)
+                await audit.log_interaction(
+                    session_id=session_id, agent_name="action",
+                    action="stream_answer", input_text=question,
+                    output_text=response.answer, provider=provider, model=model,
+                    tokens_used=0, chunks_count=0,
+                    user_id=user_id, username=username,
+                )
+                classification = audit.classify_query("action", pii_found, question)
+                yield f'data: {_json.dumps({"type": "done", "pii_detected": pii_found, "data_classification": classification, "session_id": session_id, "full_response": response.answer})}\n\n'
+
+            else:  # KNOWLEDGE+DATA
+                prompt, chunks = await self.knowledge_agent.prepare(
+                    question, conversation_history=conversation_history
+                )
+                sources = list({
+                    f"{c.metadata.get('source', 'Desconhecido')}, p. {c.metadata.get('page', '?')}"
+                    for c in (chunks or [])
+                })
+                if sources:
+                    yield f'data: {_json.dumps({"type": "sources", "chunks": sources})}\n\n'
+
+                yield f'data: {_json.dumps({"type": "token", "content": "**Análise Regulatória:**\n"})}\n\n'
+
+                full_knowledge = ""
+                if prompt:
+                    async for token in llm_router.generate_stream(prompt, provider=provider):
+                        full_knowledge += token
+                        yield f'data: {_json.dumps({"type": "token", "content": token})}\n\n'
+
+                yield f'data: {_json.dumps({"type": "token", "content": "\n\n**Análise de Dados:**\n"})}\n\n'
+
+                d_resp = await self.data_agent.answer(
+                    question, extra_context=full_knowledge, provider=provider
+                )
+                yield f'data: {_json.dumps({"type": "token", "content": d_resp.answer})}\n\n'
+
+                if d_resp.data and d_resp.data.get("sql"):
+                    yield f'data: {_json.dumps({"type": "sql", "sql": d_resp.data.get("sql"), "total": d_resp.data.get("total")})}\n\n'
+
+                full_response = (
+                    f"**Análise Regulatória:**\n{full_knowledge}\n\n"
+                    f"**Análise de Dados:**\n{d_resp.answer}"
+                )
+                pii_found = bool(detect_pii(full_response)) or has_pii(question)
+
+                await audit.log_interaction(
+                    session_id=session_id, agent_name="knowledge",
+                    action="stream_answer", input_text=question,
+                    output_text=full_knowledge, provider=provider, model=model,
+                    tokens_used=0, chunks_count=len(chunks or []),
+                    user_id=user_id, username=username,
+                )
+                await audit.log_interaction(
+                    session_id=session_id, agent_name="data",
+                    action="stream_answer", input_text=question,
+                    output_text=d_resp.answer, provider=provider, model=model,
+                    tokens_used=0, chunks_count=0,
+                    user_id=user_id, username=username,
+                )
+                k_class = audit.classify_query("knowledge", pii_found, question)
+                d_class = audit.classify_query("data", pii_found, question)
+                _order = ["public", "internal", "confidential", "restricted"]
+                classification = k_class if _order.index(k_class) >= _order.index(d_class) else d_class
+
+                yield f'data: {_json.dumps({"type": "done", "pii_detected": pii_found, "data_classification": classification, "session_id": session_id, "full_response": full_response})}\n\n'
+
+        except Exception as exc:
+            import json as _json2
+            yield f'data: {_json2.dumps({"type": "error", "message": str(exc)})}\n\n'
 
     async def _classify(self, question: str, provider: str = "ollama") -> str:
         # Short-circuit: conversational/meta questions always go to KNOWLEDGE

@@ -74,3 +74,76 @@ class TestKnowledgeAgentPrepare:
             prompt, chunks = await agent.prepare("sem resultado")
             assert prompt is None
             assert chunks == []
+
+
+class TestCoordinatorProcessStream:
+
+    @pytest.mark.asyncio
+    async def test_process_stream_yields_metadata_token_done(self):
+        """process_stream yields metadata, at least one token, and done events."""
+        from src.agents.coordinator import CoordinatorAgent
+
+        async def fake_token_stream(prompt, provider="ollama"):
+            yield "Resposta"
+
+        with patch("src.agents.coordinator.CoordinatorAgent._classify",
+                   new_callable=AsyncMock, return_value="KNOWLEDGE"), \
+             patch("src.agents.coordinator.KnowledgeAgent") as MockKA, \
+             patch("src.agents.coordinator.llm_router") as mock_router, \
+             patch("src.agents.coordinator.audit") as mock_audit, \
+             patch("src.agents.coordinator.init_db"):
+            mock_audit.generate_session_id.return_value = "abc12345"
+            mock_audit.log_interaction = AsyncMock(return_value=1)
+            mock_audit.classify_query.return_value = "public"
+            MockKA.return_value.prepare = AsyncMock(
+                return_value=("prompt text", [MagicMock(metadata={"source": "doc.pdf", "page": 1})])
+            )
+            mock_router.generate_stream = fake_token_stream
+
+            coordinator = CoordinatorAgent()
+            events = []
+            async for event in coordinator.process_stream("qual o prazo?"):
+                events.append(event)
+
+        parsed = [
+            json.loads(e.replace("data: ", "").strip())
+            for e in events if e.startswith("data:")
+        ]
+        event_types = [p["type"] for p in parsed]
+        assert "metadata" in event_types
+        assert "token" in event_types
+        assert "done" in event_types
+
+    @pytest.mark.asyncio
+    async def test_process_stream_done_has_full_response(self):
+        """done event contains the concatenation of all token events."""
+        from src.agents.coordinator import CoordinatorAgent
+
+        async def fake_token_stream(prompt, provider="ollama"):
+            yield "Olá"
+            yield " mundo"
+
+        with patch("src.agents.coordinator.CoordinatorAgent._classify",
+                   new_callable=AsyncMock, return_value="KNOWLEDGE"), \
+             patch("src.agents.coordinator.KnowledgeAgent") as MockKA, \
+             patch("src.agents.coordinator.llm_router") as mock_router, \
+             patch("src.agents.coordinator.audit") as mock_audit, \
+             patch("src.agents.coordinator.init_db"):
+            mock_audit.generate_session_id.return_value = "sess1"
+            mock_audit.log_interaction = AsyncMock(return_value=1)
+            mock_audit.classify_query.return_value = "public"
+            MockKA.return_value.prepare = AsyncMock(return_value=("prompt", []))
+            mock_router.generate_stream = fake_token_stream
+
+            coordinator = CoordinatorAgent()
+            events = []
+            async for event in coordinator.process_stream("test"):
+                events.append(event)
+
+        done_events = [
+            json.loads(e.replace("data: ", "").strip())
+            for e in events
+            if e.startswith("data:") and '"type": "done"' in e
+        ]
+        assert len(done_events) == 1
+        assert done_events[0]["full_response"] == "Olá mundo"
