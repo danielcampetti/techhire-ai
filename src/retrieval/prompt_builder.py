@@ -9,17 +9,38 @@ from typing import List
 
 from src.retrieval.query_engine import RetrievedChunk
 
-_SYSTEM_INSTRUCTIONS = """\
-Voce e um assistente especializado em compliance e regulamentacao financeira brasileira.
-Sua funcao e responder perguntas com base EXCLUSIVAMENTE nos documentos regulatorios fornecidos abaixo.
+_SYSTEM_PROMPT = """\
+Você é um assistente especializado em regulamentação financeira brasileira.
 
-Regras obrigatorias:
-1. Responda APENAS com informacoes presentes no contexto fornecido.
-2. Cite a regulamentacao especifica (nome do documento, artigo ou secao) ao responder.
-3. Se a informacao nao estiver no contexto, responda exatamente: \
-"Esta informacao nao foi encontrada nos documentos disponiveis."
-4. Use linguagem formal e tecnica adequada ao ambiente regulatorio brasileiro.
-5. Seja objetivo e preciso - evite suposicoes ou informacoes externas.\
+REGRAS OBRIGATÓRIAS:
+1. Responda EXCLUSIVAMENTE com base nos trechos fornecidos abaixo. NUNCA invente informações.
+2. Se a resposta está nos trechos, cite o artigo e normativo exato. Exemplo: "Conforme Art. 49 da Circular 3.978..."
+3. Se a resposta NÃO está nos trechos, diga: "Esta informação não foi encontrada nos documentos disponíveis."
+4. NUNCA cite artigos, valores, prazos ou normativos que não apareçam explicitamente nos trechos.
+5. Quando mencionar valores monetários, prazos ou percentuais, copie EXATAMENTE o que está nos trechos.
+6. Antes de responder, releia os trechos e verifique se sua resposta é consistente com eles.\
+"""
+
+_CONTEXT_TEMPLATE = """\
+## TRECHOS DOS DOCUMENTOS REGULATÓRIOS
+
+{chunks}
+
+---
+
+## PERGUNTA DO USUÁRIO
+
+{question}
+
+---
+
+## INSTRUÇÕES
+
+Responda à pergunta acima usando APENAS as informações dos trechos fornecidos.
+- Cite o artigo e normativo específico (ex: "Art. 9º da Resolução CMN nº 4.893")
+- Se houver valores, prazos ou percentuais nos trechos, transcreva-os exatamente
+- Se a informação não estiver nos trechos, informe que não foi encontrada
+- Seja direto e objetivo na resposta\
 """
 
 
@@ -33,17 +54,17 @@ def build_prompt(question: str, chunks: List[RetrievedChunk]) -> str:
     Returns:
         Formatted prompt string ready for submission to the LLM.
     """
-    context_parts: List[str] = []
+    chunk_parts: List[str] = []
     for i, chunk in enumerate(chunks, start=1):
         source = chunk.metadata.get("source", "Desconhecido")
         page = chunk.metadata.get("page", "?")
-        context_parts.append(f"[Fonte {i} - {source}, Pagina {page}]\n{chunk.content}")
+        chunk_parts.append(
+            f"[Trecho {i}] Fonte: {source}, Página {page}\n{chunk.content}"
+        )
 
-    context = "\n\n---\n\n".join(context_parts)
+    chunks_text = "\n\n---\n\n".join(chunk_parts)
 
     return (
-        f"{_SYSTEM_INSTRUCTIONS}\n\n"
-        f"CONTEXTO REGULATORIO:\n{context}\n\n"
-        f"PERGUNTA: {question}\n\n"
-        f"RESPOSTA:"
+        f"{_SYSTEM_PROMPT}\n\n"
+        + _CONTEXT_TEMPLATE.format(chunks=chunks_text, question=question)
     )
