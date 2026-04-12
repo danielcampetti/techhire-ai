@@ -5,7 +5,7 @@ answer based exclusively on retrieved regulatory context and cite sources.
 """
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from src.retrieval.query_engine import RetrievedChunk
 
@@ -44,12 +44,18 @@ Responda à pergunta acima usando APENAS as informações dos trechos fornecidos
 """
 
 
-def build_prompt(question: str, chunks: List[RetrievedChunk]) -> str:
-    """Assemble the final LLM prompt from a question and retrieved chunks.
+def build_prompt(
+    question: str,
+    chunks: List[RetrievedChunk],
+    conversation_history: Optional[List[dict]] = None,
+) -> str:
+    """Assemble the final LLM prompt from a question, retrieved chunks, and optional prior context.
 
     Args:
         question: The user's regulatory question (in Portuguese).
         chunks: Retrieved and reranked document chunks with metadata.
+        conversation_history: Prior messages as [{"role": "user"|"assistant", "content": "..."}].
+            Injected between system prompt and RAG chunks.
 
     Returns:
         Formatted prompt string ready for submission to the LLM.
@@ -61,10 +67,21 @@ def build_prompt(question: str, chunks: List[RetrievedChunk]) -> str:
         chunk_parts.append(
             f"[Trecho {i}] Fonte: {source}, Página {page}\n{chunk.content}"
         )
-
     chunks_text = "\n\n---\n\n".join(chunk_parts)
 
+    history_section = ""
+    if conversation_history:
+        lines = []
+        for msg in conversation_history:
+            label = "Usuário" if msg["role"] == "user" else "Assistente"
+            lines.append(f"{label}: {msg['content'][:500]}")
+        history_section = (
+            "\n\n--- Histórico da conversa ---\n"
+            + "\n".join(lines)
+            + "\n--- Fim do histórico ---"
+        )
+
     return (
-        f"{_SYSTEM_PROMPT}\n\n"
+        f"{_SYSTEM_PROMPT}{history_section}\n\n"
         + _CONTEXT_TEMPLATE.format(chunks=chunks_text, question=question)
     )

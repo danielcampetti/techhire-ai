@@ -91,7 +91,10 @@ class CoordinatorAgent:
         model = "claude-sonnet-4-6" if provider == "claude" else "llama3:8b"
 
         if routing == "KNOWLEDGE":
-            response = await self.knowledge_agent.answer(question, provider=provider)
+            response = await self.knowledge_agent.answer(
+                question, provider=provider,
+                conversation_history=conversation_history,
+            )
             details.append(_to_detail(response))
             agents_used.append("knowledge")
             final = response.answer
@@ -142,7 +145,10 @@ class CoordinatorAgent:
             classification = audit.classify_query("action", pii_found, question)
 
         else:  # KNOWLEDGE+DATA
-            k_resp = await self.knowledge_agent.answer(question, provider=provider)
+            k_resp = await self.knowledge_agent.answer(
+                question, provider=provider,
+                conversation_history=conversation_history,
+            )
             d_resp = await self.data_agent.answer(
                 question, extra_context=k_resp.answer, provider=provider
             )

@@ -1,6 +1,8 @@
 """Knowledge agent — wraps the Phase 1 RAG pipeline."""
 from __future__ import annotations
 
+from typing import Optional
+
 from src.agents.base import AgentResponse
 from src.llm import llm_router
 from src.retrieval.prompt_builder import build_prompt
@@ -25,12 +27,18 @@ class KnowledgeAgent:
         hits = sum(1 for kw in _KNOWLEDGE_KEYWORDS if kw in q)
         return min(hits * 0.2, 1.0)
 
-    async def answer(self, question: str, provider: str = "ollama") -> AgentResponse:
+    async def answer(
+        self,
+        question: str,
+        provider: str = "ollama",
+        conversation_history: Optional[list[dict]] = None,
+    ) -> AgentResponse:
         """Retrieve relevant chunks and generate an answer.
 
         Args:
             question: Natural language question in Portuguese.
             provider: LLM backend — "ollama" (default) or "claude".
+            conversation_history: Optional prior messages for multi-turn context.
 
         Returns:
             AgentResponse with the answer text, sources, and confidence score.
@@ -44,7 +52,7 @@ class KnowledgeAgent:
                 confidence=0.0,
             )
 
-        prompt = build_prompt(question, chunks)
+        prompt = build_prompt(question, chunks, conversation_history=conversation_history)
         answer_text = await llm_router.generate(prompt, provider=provider)
 
         sources = list({
