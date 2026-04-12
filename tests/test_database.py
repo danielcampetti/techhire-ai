@@ -8,13 +8,11 @@ from src.database.setup import create_tables
 
 
 @pytest.fixture(autouse=True)
-def tmp_db(tmp_path):
+def tmp_db(tmp_path, monkeypatch):
     """Redirect all DB operations to a temp path."""
     import src.database.connection as conn_mod
-    original = conn_mod.settings.db_path
-    conn_mod.settings.__dict__["db_path"] = str(tmp_path / "test.db")
+    monkeypatch.setattr(conn_mod.settings, "db_path", str(tmp_path / "test.db"))
     yield str(tmp_path / "test.db")
-    conn_mod.settings.__dict__["db_path"] = original
 
 
 def test_get_db_yields_connection(tmp_db):
@@ -57,3 +55,8 @@ def test_get_db_rolls_back_on_exception(tmp_db):
     with get_db() as conn:
         count = conn.execute("SELECT COUNT(*) FROM agent_log").fetchone()[0]
     assert count == 0
+
+
+def test_row_factory_is_set(tmp_db):
+    with get_db() as conn:
+        assert conn.row_factory == sqlite3.Row

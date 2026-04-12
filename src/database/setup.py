@@ -46,7 +46,10 @@ CREATE TABLE IF NOT EXISTS agent_log (
 def create_tables() -> None:
     """Create all tables if they do not already exist."""
     with get_db() as conn:
-        conn.executescript(_DDL)
+        for statement in _DDL.strip().split(";"):
+            s = statement.strip()
+            if s:
+                conn.execute(s)
 
 
 if __name__ == "__main__":
