@@ -62,7 +62,9 @@ def test_chat_returns_answer_with_sources() -> None:
     )
 
     with patch("src.api.main.retrieve", return_value=[mock_chunk]), \
-         patch("src.api.main.generate", new_callable=AsyncMock, return_value="O compliance e essencial."):
+         patch("src.api.main.ollama_client.generate", new_callable=AsyncMock, return_value="O compliance e essencial."), \
+         patch("src.api.main.settings") as mock_cfg:
+        mock_cfg.llm_provider = "ollama"
         client = _get_client()
         response = client.post("/chat", json={"pergunta": "O que e compliance?"})
 
@@ -93,3 +95,56 @@ def test_list_documents_returns_document_list() -> None:
     body = response.json()
     assert "documentos" in body
     assert body["total"] == 1
+
+
+def test_agent_endpoint_passes_provider_to_coordinator() -> None:
+    from src.agents.coordinator import CoordinatorResponse
+
+    mock_response = CoordinatorResponse(
+        pergunta="Qual o prazo?",
+        roteamento="KNOWLEDGE",
+        agentes_utilizados=["knowledge"],
+        resposta_final="Prazo é 1º de março de 2026.",
+        detalhes_agentes=[],
+        log_id=1,
+        provider_utilizado="claude",
+    )
+
+    with patch("src.api.main.CoordinatorAgent") as MockCoordinator:
+        instance = MockCoordinator.return_value
+        instance.process = AsyncMock(return_value=mock_response)
+        client = _get_client()
+        response = client.post("/agent", json={"pergunta": "Qual o prazo?", "provider": "claude"})
+
+    assert response.status_code == 200
+    instance.process.assert_awaited_once_with("Qual o prazo?", provider="claude")
+    assert response.json()["provider_utilizado"] == "claude"
+
+
+def test_agent_endpoint_returns_503_when_claude_key_missing() -> None:
+    with patch("src.api.main.CoordinatorAgent") as MockCoordinator:
+        instance = MockCoordinator.return_value
+        instance.process = AsyncMock(side_effect=ValueError("ANTHROPIC_API_KEY não configurado"))
+        client = _get_client()
+        response = client.post("/agent", json={"pergunta": "Qual o prazo?", "provider": "claude"})
+
+    assert response.status_code == 503
+    assert "ANTHROPIC_API_KEY" in response.json()["detail"]
+
+
+def test_chat_returns_503_when_claude_key_missing() -> None:
+    from src.retrieval.query_engine import RetrievedChunk
+
+    mock_chunk = RetrievedChunk(
+        content="Compliance é obrigatório.",
+        score=0.92,
+        metadata={"source": "norma.pdf", "page": 3},
+    )
+
+    with patch("src.api.main.retrieve", return_value=[mock_chunk]), \
+         patch("src.api.main.claude_client.generate", new_callable=AsyncMock,
+               side_effect=ValueError("ANTHROPIC_API_KEY não configurado")):
+        client = _get_client()
+        response = client.post("/chat", json={"pergunta": "O que é compliance?", "provider": "claude"})
+
+    assert response.status_code == 503

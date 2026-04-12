@@ -64,6 +64,7 @@ class ChatResponse(BaseModel):
 
 class AgentRequest(BaseModel):
     pergunta: str
+    provider: Optional[str] = None  # "ollama" or "claude"; falls back to settings.llm_provider
 
 
 # -- Endpoints ----------------------------------------------------------------
@@ -126,10 +127,15 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
     prompt = build_prompt(request.pergunta, chunks)
     provider = (request.provider or settings.llm_provider).lower()
-    if provider == "claude":
-        resposta = await claude_client.generate(prompt)
-    else:
-        resposta = await ollama_client.generate(prompt)
+    try:
+        if provider == "claude":
+            resposta = await claude_client.generate(prompt)
+        else:
+            resposta = await ollama_client.generate(prompt)
+    except ValueError as exc:
+        if "ANTHROPIC_API_KEY" in str(exc):
+            raise HTTPException(status_code=503, detail=str(exc))
+        raise
 
     fontes = [
         FonteSchema(
@@ -162,8 +168,14 @@ async def agent_endpoint(request: AgentRequest) -> CoordinatorResponse:
     Supports regulatory questions (Knowledge), data queries (Data),
     compliance actions (Action), and combined queries (Knowledge+Data).
     """
+    provider = (request.provider or settings.llm_provider).lower()
     coordinator = CoordinatorAgent()
-    return await coordinator.process(request.pergunta)
+    try:
+        return await coordinator.process(request.pergunta, provider=provider)
+    except ValueError as exc:
+        if "ANTHROPIC_API_KEY" in str(exc):
+            raise HTTPException(status_code=503, detail=str(exc))
+        raise
 
 
 @app.get("/alerts")
