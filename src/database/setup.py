@@ -40,6 +40,17 @@ CREATE TABLE IF NOT EXISTS agent_log (
     output_summary  TEXT,
     tokens_used     INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT    NOT NULL UNIQUE,
+    password_hash TEXT    NOT NULL,
+    full_name     TEXT    NOT NULL,
+    role          TEXT    NOT NULL DEFAULT 'analyst',
+    created_at    TEXT    NOT NULL,
+    last_login    TEXT,
+    is_active     BOOLEAN NOT NULL DEFAULT TRUE
+);
 """
 
 
@@ -50,6 +61,16 @@ def create_tables() -> None:
             s = statement.strip()
             if s:
                 conn.execute(s)
+
+
+def migrate_audit_log_add_user_columns() -> None:
+    """Add user_id/username to audit_log if missing (idempotent)."""
+    with get_db() as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(agent_log)")}
+        if "user_id" not in cols:
+            conn.execute("ALTER TABLE agent_log ADD COLUMN user_id INTEGER")
+        if "username" not in cols:
+            conn.execute("ALTER TABLE agent_log ADD COLUMN username TEXT")
 
 
 if __name__ == "__main__":

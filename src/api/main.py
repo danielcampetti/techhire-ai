@@ -14,13 +14,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional, Union
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-_TEMPLATE_PATH = Path(__file__).parent / "templates" / "index.html"
+_TEMPLATE_PATH  = Path(__file__).parent / "templates" / "index.html"
+_LOGIN_PATH     = Path(__file__).parent / "templates" / "login.html"
+_DASHBOARD_PATH = Path(__file__).parent / "templates" / "dashboard.html"
 
 from src.config import settings
+from src.api.auth import TokenUser, require_role
+from src.api.auth_routes import auth_router
 from src.ingestion.chunker import chunk_pages
 from src.ingestion.embedder import _get_client as _get_chroma_client
 from src.ingestion.embedder import index_chunks, list_indexed_documents
@@ -40,6 +44,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
+app.include_router(auth_router)
 app.include_router(diagnostic_router)
 app.include_router(evaluate_router)
 
@@ -75,8 +80,18 @@ async def chat_ui() -> HTMLResponse:
     return HTMLResponse(_TEMPLATE_PATH.read_text(encoding="utf-8"))
 
 
+@app.get("/login", response_class=HTMLResponse, include_in_schema=False)
+async def login_ui() -> HTMLResponse:
+    return HTMLResponse(_LOGIN_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
+async def dashboard_ui() -> HTMLResponse:
+    return HTMLResponse(_DASHBOARD_PATH.read_text(encoding="utf-8"))
+
+
 @app.post("/ingest", summary="Indexar documentos PDF")
-async def ingest() -> dict:
+async def ingest(_: TokenUser = Depends(require_role("manager"))) -> dict:
     """Processa todos os PDFs em data/raw/ e indexa seus chunks no ChromaDB.
 
     Returns:
@@ -108,7 +123,7 @@ async def ingest() -> dict:
 
 
 @app.post("/chat", response_model=ChatResponse, summary="Consultar base regulatoria")
-async def chat(request: ChatRequest) -> ChatResponse:
+async def chat(request: ChatRequest, _: TokenUser = Depends(require_role("analyst", "manager"))) -> ChatResponse:
     """Recebe uma pergunta e retorna resposta com citacoes das fontes.
 
     Args:
@@ -150,7 +165,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
 
 @app.get("/documents", summary="Listar documentos indexados")
-async def list_documents() -> dict:
+async def list_documents(_: TokenUser = Depends(require_role("analyst", "manager"))) -> dict:
     """Lista todos os documentos unicos presentes no indice vetorial.
 
     Returns:
@@ -184,6 +199,7 @@ async def list_alerts(
     severity: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    _: TokenUser = Depends(require_role("analyst", "manager")),
 ) -> dict:
     """List compliance alerts with optional filters."""
     init_db()
@@ -224,6 +240,7 @@ async def list_transactions(
     date_to: Optional[str] = None,
     reported_to_coaf: Optional[bool] = None,
     pep_flag: Optional[bool] = None,
+    _: TokenUser = Depends(require_role("analyst", "manager")),
 ) -> dict:
     """List transactions with optional filters."""
     init_db()

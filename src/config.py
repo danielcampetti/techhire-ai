@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     claude_model: str = "claude-sonnet-4-6"
     anthropic_api_key: Optional[str] = None
 
+    # JWT settings
+    jwt_secret_key: str = "dev-secret-change-in-production"
+    jwt_algorithm: str = "HS256"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

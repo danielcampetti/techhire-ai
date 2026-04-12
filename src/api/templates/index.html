@@ -544,6 +544,9 @@
                 <button class="provider-btn" id="btn-claude" onclick="setProvider('claude')">CLAUDE</button>
             </div>
             <div class="status"><div class="status-dot"></div>ONLINE</div>
+            <span id="username-display" class="doc-count"></span>
+            <a id="dashboard-link" href="/dashboard" style="display:none" class="doc-count">DASHBOARD</a>
+            <button onclick="logout()" class="provider-btn">SAIR</button>
         </div>
     </header>
 
@@ -575,6 +578,20 @@
 
 </div>
 <script>
+    // Auth guard
+    const token = localStorage.getItem('jwt_token');
+    if (!token) location.href = '/login';
+
+    fetch('/auth/me', {headers: {'Authorization': 'Bearer ' + token}})
+        .then(r => { if (!r.ok) { localStorage.removeItem('jwt_token'); location.href = '/login'; } return r.json(); })
+        .then(u => {
+            document.getElementById('username-display').textContent = u.full_name;
+            if (u.role === 'manager') document.getElementById('dashboard-link').style.display = 'inline';
+        })
+        .catch(() => { localStorage.removeItem('jwt_token'); location.href = '/login'; });
+
+    function logout() { localStorage.removeItem('jwt_token'); location.href = '/login'; }
+
     const msgs   = document.getElementById('messages');
     const input  = document.getElementById('question');
     const btn    = document.getElementById('send');
@@ -588,7 +605,7 @@
     }
 
     // Load doc count on start
-    fetch('/documents').then(r => r.json()).then(d => {
+    fetch('/documents', {headers: {'Authorization': 'Bearer ' + token}}).then(r => r.json()).then(d => {
         const el = document.getElementById('doc-count');
         if (d.total > 0) el.textContent = d.total + ' DOC' + (d.total > 1 ? 'S' : '') + ' INDEXADOS';
     }).catch(() => {});
@@ -764,7 +781,7 @@
         try {
             const res = await fetch('/agent', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token},
                 body: JSON.stringify({ pergunta: q, provider: currentProvider })
             });
             if (!res.ok) throw new Error('HTTP ' + res.status);

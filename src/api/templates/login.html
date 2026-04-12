@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ComplianceAgent — Login</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=JetBrains+Mono:wght@300;400&family=Outfit:wght@300;400;500&display=swap" rel="stylesheet">
+    <style>
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+        :root{--bg:#0c0b0a;--card:#141210;--border:rgba(200,168,75,0.14);--gold:#c8a84b;--text:#e8e0cc;--text-2:#9a9080;--red:#fc8181}
+        body{background:var(--bg);color:var(--text);font-family:'Outfit',sans-serif;font-weight:300;height:100vh;display:flex;align-items:center;justify-content:center}
+        .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:2.5rem;width:100%;max-width:380px}
+        .brand{font-family:'DM Serif Display',serif;font-size:1.5rem;color:var(--text);margin-bottom:.5rem}
+        .subtitle{font-family:'JetBrains Mono',monospace;font-size:.6rem;color:var(--gold);letter-spacing:.2em;margin-bottom:2rem;opacity:.75}
+        label{font-family:'JetBrains Mono',monospace;font-size:.62rem;color:var(--text-2);letter-spacing:.08em;display:block;margin-bottom:.4rem}
+        input{width:100%;background:#0c0b0a;border:1px solid var(--border);border-radius:8px;padding:.65rem 1rem;color:var(--text);font-family:'Outfit',sans-serif;font-size:.9rem;outline:none;transition:border-color .2s;margin-bottom:1.2rem}
+        input:focus{border-color:var(--gold)}
+        button{width:100%;background:var(--gold);color:#0c0b0a;border:none;border-radius:8px;padding:.72rem;font-family:'JetBrains Mono',monospace;font-size:.7rem;letter-spacing:.1em;cursor:pointer;transition:background .18s;margin-top:.4rem}
+        button:hover{background:#d4b55c}
+        .error{display:none;font-family:'JetBrains Mono',monospace;font-size:.62rem;color:var(--red);letter-spacing:.04em;margin-top:.8rem;text-align:center}
+        .error.show{display:block}
+    </style>
+</head>
+<body>
+<div class="card">
+    <div class="brand">ComplianceAgent</div>
+    <div class="subtitle">BCB · CVM · CMN</div>
+    <label>USUÁRIO</label>
+    <input type="text" id="username" placeholder="admin" autocomplete="username">
+    <label>SENHA</label>
+    <input type="password" id="password" placeholder="••••••••" autocomplete="current-password">
+    <button onclick="doLogin()">ENTRAR</button>
+    <div class="error" id="error-msg"></div>
+</div>
+<script>
+    if (localStorage.getItem('jwt_token')) location.href = '/';
+    document.getElementById('password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+    async function doLogin() {
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value;
+        const errEl = document.getElementById('error-msg');
+        errEl.classList.remove('show');
+        if (!username || !password) { errEl.textContent = 'Preencha usuário e senha.'; errEl.classList.add('show'); return; }
+        try {
+            const res = await fetch('/auth/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: new URLSearchParams({username, password}),
+            });
+            if (!res.ok) { const d = await res.json(); errEl.textContent = d.detail || 'Erro ao fazer login.'; errEl.classList.add('show'); return; }
+            const data = await res.json();
+            localStorage.setItem('jwt_token', data.access_token);
+            const me = await fetch('/auth/me', {headers: {'Authorization': 'Bearer ' + data.access_token}});
+            const user = await me.json();
+            location.href = user.role === 'manager' ? '/dashboard' : '/';
+        } catch (e) { errEl.textContent = 'Não foi possível conectar ao servidor.'; errEl.classList.add('show'); }
+    }
+</script>
+</body>
+</html>
