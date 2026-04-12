@@ -37,6 +37,7 @@ from src.database.connection import get_db
 from src.database.seed import init_db
 from src.api.diagnostic import router as diagnostic_router
 from src.api.evaluate import router as evaluate_router
+from src.api.conversation_routes import conversation_router
 
 app = FastAPI(
     title="ComplianceAgent API",
@@ -47,6 +48,7 @@ app = FastAPI(
 app.include_router(auth_router)
 app.include_router(diagnostic_router)
 app.include_router(evaluate_router)
+app.include_router(conversation_router)
 
 
 # -- Request / Response models -----------------------------------------------

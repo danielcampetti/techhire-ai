@@ -137,3 +137,66 @@ class TestConversationService:
         assert len(ctx) == 6
         # Must be last 6 in chronological order
         assert ctx[0]["content"] == "Q5"
+
+
+class TestConversationAPI:
+
+    @pytest.fixture
+    def client(self, tmp_db):
+        from fastapi.testclient import TestClient
+        from src.api.main import app
+        return TestClient(app)
+
+    def _token(self, role: str = "analyst") -> str:
+        from src.api.auth import create_access_token
+        uid, uname = (1, "admin") if role == "manager" else (2, "analista")
+        return create_access_token(uid, uname, role)
+
+    def test_create_conversation(self, client):
+        h = {"Authorization": f"Bearer {self._token()}"}
+        res = client.post("/conversations", json={}, headers=h)
+        assert res.status_code == 201
+        data = res.json()
+        assert "id" in data and data["title"] == "Nova conversa"
+
+    def test_list_empty(self, client):
+        h = {"Authorization": f"Bearer {self._token()}"}
+        res = client.get("/conversations", headers=h)
+        assert res.status_code == 200
+        assert res.json()["conversations"] == []
+
+    def test_create_then_list(self, client):
+        h = {"Authorization": f"Bearer {self._token()}"}
+        client.post("/conversations", json={"title": "Minha conversa"}, headers=h)
+        convs = client.get("/conversations", headers=h).json()["conversations"]
+        assert len(convs) == 1 and convs[0]["title"] == "Minha conversa"
+
+    def test_get_conversation_messages(self, client):
+        h = {"Authorization": f"Bearer {self._token()}"}
+        conv = client.post("/conversations", json={}, headers=h).json()
+        res = client.get(f"/conversations/{conv['id']}", headers=h)
+        assert res.status_code == 200
+        data = res.json()
+        assert "conversation" in data and data["messages"] == []
+
+    def test_get_conversation_wrong_user_404(self, client):
+        ha = {"Authorization": f"Bearer {self._token('analyst')}"}
+        hm = {"Authorization": f"Bearer {self._token('manager')}"}
+        conv = client.post("/conversations", json={}, headers=ha).json()
+        assert client.get(f"/conversations/{conv['id']}", headers=hm).status_code == 404
+
+    def test_rename_conversation(self, client):
+        h = {"Authorization": f"Bearer {self._token()}"}
+        conv = client.post("/conversations", json={}, headers=h).json()
+        client.patch(f"/conversations/{conv['id']}/title", json={"title": "Novo nome"}, headers=h)
+        listing = client.get("/conversations", headers=h).json()["conversations"]
+        assert listing[0]["title"] == "Novo nome"
+
+    def test_delete_conversation(self, client):
+        h = {"Authorization": f"Bearer {self._token()}"}
+        conv = client.post("/conversations", json={}, headers=h).json()
+        assert client.delete(f"/conversations/{conv['id']}", headers=h).status_code == 204
+        assert client.get("/conversations", headers=h).json()["conversations"] == []
+
+    def test_unauthenticated_returns_401_or_403(self, client):
+        assert client.get("/conversations").status_code in (401, 403)
