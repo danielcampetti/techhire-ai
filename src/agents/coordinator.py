@@ -26,10 +26,12 @@ Você é um roteador de agentes de compliance financeiro. Classifique a intenç�
 
 Agentes disponíveis:
 - KNOWLEDGE: Perguntas sobre regulamentações, normas, resoluções, circulares, artigos, prazos legais.
-  Exemplos: "O que diz o Art. 49 da Circular 3.978?", "Quais são os requisitos de cibersegurança?"
+  Também inclui perguntas conversacionais/meta sobre a própria conversa (histórico, perguntas anteriores, resumos, pedidos de esclarecimento).
+  Exemplos: "O que diz o Art. 49 da Circular 3.978?", "Quais são os requisitos de cibersegurança?",
+            "qual foi a pergunta anterior?", "explique melhor", "resuma o que discutimos", "o que você disse antes?"
 - DATA: Perguntas sobre dados de transações, clientes, operações, alertas no banco de dados.
   Exemplos: "Quantas operações acima de R$50.000 temos?", "Quais clientes são PEP?"
-- ACTION: Solicitações de ações concretas no sistema.
+- ACTION: Solicitações de ações concretas no sistema (criar, atualizar, resolver, reportar).
   Exemplos: "Crie um alerta", "Gere um relatório de alertas abertos", "Resolver alerta #3"
 - KNOWLEDGE+DATA: Perguntas que cruzam regulamentação com dados reais.
   Exemplos: "Verifique se estamos em conformidade com o Art. 49 sobre operações em espécie"
@@ -198,6 +200,10 @@ class CoordinatorAgent:
         )
 
     async def _classify(self, question: str, provider: str = "ollama") -> str:
+        # Short-circuit: conversational/meta questions always go to KNOWLEDGE
+        # (conversation history is only injected there; no LLM call needed)
+        if _is_conversational(question):
+            return "KNOWLEDGE"
         try:
             prompt = _ROUTING_PROMPT.format(question=question)
             raw = await llm_router.generate(prompt, provider=provider)
@@ -220,6 +226,31 @@ class CoordinatorAgent:
                 (now, "coordinator", f"route:{routing}", question[:500], answer[:500]),
             )
             return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+
+def _is_conversational(question: str) -> bool:
+    """Return True for meta/conversational questions that refer to the conversation itself.
+
+    These must route to KNOWLEDGE regardless of LLM classification, because only
+    KnowledgeAgent receives the conversation_history injected into build_prompt().
+    Input is accent-normalized before matching so users can omit diacritics.
+    """
+    import unicodedata
+    q = unicodedata.normalize("NFD", question.lower())
+    q = "".join(c for c in q if unicodedata.category(c) != "Mn")  # strip combining marks
+
+    patterns = (
+        "pergunta anterior", "pergunta passada",
+        "o que voce disse", "o que foi dito", "voce disse antes",
+        "explique melhor", "pode explicar melhor", "mais detalhes sobre isso",
+        "resuma nossa conversa", "resuma o que discutimos", "resuma a conversa",
+        "o que discutimos", "nossa conversa",
+        "me lembra", "pode repetir", "repita o que",
+        "contexto da conversa", "historico da conversa",
+        "qual foi a ultima", "qual foi o ultimo",
+        "como assim", "nao entendi", "elabore mais",
+    )
+    return any(p in q for p in patterns)
 
 
 def _heuristic_route(question: str) -> str:
