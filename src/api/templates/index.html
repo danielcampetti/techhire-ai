@@ -1073,10 +1073,11 @@
         event.stopPropagation();
         if (!confirm('Apagar esta conversa?')) return;
         try {
-            await fetch(`/conversations/${convId}`, {
+            const res = await fetch(`/conversations/${convId}`, {
                 method: 'DELETE',
                 headers: {'Authorization': 'Bearer ' + token},
             });
+            if (!res.ok) return;
             if (convId === currentConversationId) {
                 await startNewConversation();
             } else {
@@ -1102,7 +1103,8 @@
                     body: JSON.stringify({}),
                 });
                 if (res.ok) currentConversationId = (await res.json()).id;
-            } catch (e) {}
+                else return;  // abort if conversation couldn't be created
+            } catch (e) { return; }
         }
 
         loading = true;
