@@ -1,6 +1,7 @@
 """FastAPI application for ComplianceAgent.
 
 Endpoints:
+- GET  /         -- Chat UI (browser interface)
 - POST /ingest   -- Index all PDFs in data/raw/
 - POST /chat     -- Answer a regulatory question with source citations
 - GET  /documents -- List all indexed documents
@@ -11,7 +12,10 @@ from pathlib import Path
 from typing import List, Union
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+
+_TEMPLATE_PATH = Path(__file__).parent / "templates" / "index.html"
 
 from src.config import settings
 from src.ingestion.chunker import chunk_pages
@@ -47,6 +51,12 @@ class ChatResponse(BaseModel):
 
 
 # -- Endpoints ----------------------------------------------------------------
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def chat_ui() -> HTMLResponse:
+    """Serve the browser chat interface."""
+    return HTMLResponse(_TEMPLATE_PATH.read_text(encoding="utf-8"))
+
 
 @app.post("/ingest", summary="Indexar documentos PDF")
 async def ingest() -> dict:
