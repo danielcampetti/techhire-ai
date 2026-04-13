@@ -286,13 +286,14 @@ async def agent_stream_endpoint(
                 username=current_user.username,
                 conversation_history=conversation_history,
             ):
-                if '"type": "done"' in event or '"type":"done"' in event:
+                yield event
+                if event.startswith("data:"):
                     try:
-                        data = json.loads(event.replace("data: ", "", 1).strip())
-                        full_response = data.get("full_response", "")
+                        data = json.loads(event[5:].strip())
+                        if data.get("type") == "done":
+                            full_response = data.get("full_response", "")
                     except Exception:
                         pass
-                yield event
         except Exception as exc:
             yield f'data: {json.dumps({"type": "error", "message": str(exc)})}\n\n'
 
