@@ -1,20 +1,20 @@
-version: "3.9"
-
 services:
-  api:
+  app:
     build: .
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/data
-      - ./chroma_db:/app/chroma_db
+      - ./data/raw:/app/data/raw          # PDFs — add locally, available in container
+      - ./data:/app/data                   # SQLite DB persisted
+      - chroma_data:/app/chroma_db         # ChromaDB persisted
+      - ./.env:/app/.env:ro                # Env vars (read-only)
     environment:
-      OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: llama3:8b
-      CHROMA_DB_PATH: /app/chroma_db
-      DATA_RAW_DIR: /app/data/raw
+      - OLLAMA_URL=http://ollama:11434
+      - DB_PATH=data/compliance.db
+      - CHROMA_DB_PATH=chroma_db
     depends_on:
-      - ollama
+      ollama:
+        condition: service_started
     restart: unless-stopped
 
   ollama:
@@ -22,16 +22,17 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - ollama_data:/root/.ollama
-    # Remove the deploy block if you don't have nvidia-container-toolkit installed
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+      - ollama_models:/root/.ollama
     restart: unless-stopped
+    # GPU support: uncomment below if NVIDIA GPU + nvidia-container-toolkit installed
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
 
 volumes:
-  ollama_data:
+  chroma_data:
+  ollama_models:

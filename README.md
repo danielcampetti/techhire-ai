@@ -7,33 +7,37 @@ Ingere PDFs do Banco Central do Brasil (BCB), CVM e outros orgaos regulatorios, 
 
 ## Pre-requisitos
 
-- Docker + Docker Compose
-- NVIDIA GPU com nvidia-container-toolkit (opcional, mas recomendado)
+- [Docker](https://docs.docker.com/get-docker/) e [Docker Compose](https://docs.docker.com/compose/install/)
 - PDFs regulatorios adicionados em `data/raw/`
 
 ## Inicio Rapido (Docker)
 
 ```bash
 # 1. Clonar o repositorio
-git clone <repo-url>
+git clone https://github.com/danielcampetti/compliance-agent.git
 cd compliance-agent
 
 # 2. Copiar variaveis de ambiente
 cp .env.example .env
+# Edite .env e adicione ANTHROPIC_API_KEY (opcional — necessario apenas para o provider Claude)
 
-# 3. Subir os servicos
-docker-compose up -d
+# 3. Adicionar PDFs regulatorios em data/raw/
+# Baixe em https://www.bcb.gov.br e coloque os PDFs na pasta data/raw/
 
-# 4. Baixar o modelo LLM (execute uma vez)
-docker exec -it compliance-agent-ollama-1 ollama pull llama3:8b
+# 4. Subir tudo
+docker-compose up --build
+```
 
-# 5. Adicionar PDFs em data/raw/ e indexar
-curl -X POST http://localhost:8000/ingest
+O primeiro start baixa o modelo LLM (~4.7GB). Starts seguintes sao rapidos.
+Acesse http://localhost:8000 — login: **admin/admin123**
 
-# 6. Fazer uma pergunta
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"pergunta": "O que e politica de conformidade segundo a CMN 4.968?"}'
+### Suporte a GPU (Opcional)
+
+Se voce tiver GPU NVIDIA com [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html):
+
+```bash
+# Descomente a secao GPU em docker-compose.yml, depois:
+docker-compose up --build
 ```
 
 ## Desenvolvimento Local (sem Docker)

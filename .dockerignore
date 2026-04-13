@@ -1,0 +1,16 @@
+.git
+.github
+.env
+.env.*
+*.env
+__pycache__
+*.pyc
+.pytest_cache
+.worktrees
+chroma_db
+data/compliance.db
+data/benchmark_*
+*.egg-info
+.venv
+venv
+node_modules

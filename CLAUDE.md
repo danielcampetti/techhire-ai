@@ -205,6 +205,8 @@ GitHub Actions runs on every push to `master` and every pull request.
 | src/api/evaluate.py | ✅ Done |
 | src/api/templates/index.html | ✅ Done |
 | Dockerfile + docker-compose.yml | ✅ Done |
+| scripts/start.sh | ✅ Done |
+| .dockerignore | ✅ Done |
 | README.md | ✅ Done |
 | src/database/connection.py | ✅ Done |
 | src/database/setup.py | ✅ Done |
