@@ -126,6 +126,33 @@ Context injection: last 10 messages fed into `build_prompt()` between system pro
 
 Frontend: 280px collapsible sidebar with date-grouped history, click-to-load, auto-title on first message, mobile hamburger toggle.
 
+### Phase 7 — SSE Streaming [CURRENT]
+**Status:** Complete
+
+Architecture:
+```
+POST /agent/stream (SSE, JWT-protected)
+  → CoordinatorAgent.process_stream(question, provider, user_id, username, conversation_history)
+  → metadata event  {type: "metadata", roteamento, agentes_utilizados}
+  → sources event   {type: "sources", chunks: ["file.pdf, p. 3", ...]}  (KNOWLEDGE only)
+  → token events    {type: "token", content: "..."}  (streamed for KNOWLEDGE; single for DATA/ACTION)
+  → sql event       {type: "sql", sql: "...", total: N}  (DATA agent only)
+  → actions event   {type: "actions", acoes: [...]}  (ACTION agent only)
+  → done event      {type: "done", pii_detected, data_classification, session_id, full_response}
+  → error event     {type: "error", message: "..."}  (on exception)
+```
+
+New methods:
+- `src/llm/llm_router.py` → `generate_stream(prompt, provider)` — routes streaming to Ollama or Claude
+- `src/agents/knowledge_agent.py` → `KnowledgeAgent.prepare(question, conversation_history)` → `(prompt, chunks)`
+- `src/agents/coordinator.py` → `CoordinatorAgent.process_stream(question, provider, user_id, username, conversation_history)` — async generator
+
+Endpoints:
+- `POST /agent` — unchanged, returns complete `CoordinatorResponse` JSON
+- `POST /agent/stream` — new, returns `text/event-stream` SSE; requires JWT; accepts `conversation_id`
+
+Frontend: blinking gold cursor appears immediately on send; tokens render word-by-word; route badge appears on metadata event; source chips and SQL/action blocks appear after streaming completes; conversation sidebar refreshes after done.
+
 ## Architecture Decisions
 
 - **Local-first:** Zero cloud dependency. Ollama for LLM, sentence-transformers for embeddings.
@@ -175,6 +202,8 @@ Frontend: 280px collapsible sidebar with date-grouped history, click-to-load, au
 | src/evaluation/benchmark.py | ✅ Done |
 | src/services/conversation.py | ✅ Done |
 | src/api/conversation_routes.py | ✅ Done |
+| src/llm/llm_router.py | ✅ Done |
+| tests/test_streaming.py | ✅ Done |
 
 ## Running Locally (Phase 1)
 
