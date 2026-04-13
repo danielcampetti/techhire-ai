@@ -15,11 +15,11 @@ async def test_route_ollama_calls_ollama_client():
 
 @pytest.mark.asyncio
 async def test_route_claude_calls_claude_client():
-    with patch("src.llm.llm_router.claude_client.generate", new_callable=AsyncMock, return_value="claude resp") as mock_claude, \
-         patch("src.llm.llm_router.settings") as mock_settings:
+    from src.llm import llm_router
+    import importlib; importlib.reload(llm_router)
+    with patch.object(llm_router, "settings") as mock_settings, \
+         patch.object(llm_router.claude_client, "generate", new_callable=AsyncMock, return_value="claude resp") as mock_claude:
         mock_settings.anthropic_api_key = "sk-test"
-        from src.llm import llm_router
-        import importlib; importlib.reload(llm_router)
         result = await llm_router.generate("prompt", provider="claude")
     mock_claude.assert_awaited_once_with("prompt")
     assert result == "claude resp"
