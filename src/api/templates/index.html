@@ -813,6 +813,10 @@
         return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
     }
 
+    function escAttr(s) {
+        return esc(String(s)).replace(/"/g, '&quot;');
+    }
+
     function removeWelcome() {
         const w = document.getElementById('welcome');
         if (w) w.remove();
@@ -1126,7 +1130,7 @@
         const pills = (agentes || []).map(a =>
             `<span class="agent-pill">${esc(AGENT_LABEL[a] || a)}</span>`
         ).join('');
-        meta.innerHTML = `<span class="route-badge ${rm.cls}">${esc(rm.label)}</span>${pills}`;
+        meta.innerHTML = `<span class="route-badge ${escAttr(rm.cls)}">${esc(rm.label)}</span>${pills}`;
     }
 
     function updateStreamingContent(msgDiv, text) {
@@ -1145,9 +1149,9 @@
             ).join('');
             let classBadge = '';
             if (data_classification && data_classification !== 'public') {
-                classBadge = `<span class="classification-badge badge-${esc(data_classification)}">${esc(data_classification.toUpperCase())}</span>`;
+                classBadge = `<span class="classification-badge badge-${escAttr(data_classification)}">${esc(data_classification.toUpperCase())}</span>`;
             }
-            meta.innerHTML = `<span class="route-badge ${rm.cls}">${esc(rm.label)}</span>${pills}${classBadge}`;
+            meta.innerHTML = `<span class="route-badge ${escAttr(rm.cls)}">${esc(rm.label)}</span>${pills}${classBadge}`;
         }
         const content = msgDiv.querySelector('#stream-content');
         if (content) {
@@ -1233,51 +1237,55 @@
             let dataClassification = 'public';
             let serverError = null;
 
-            outer:
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop();
+            try {
+                outer:
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
 
-                for (const line of lines) {
-                    if (!line.startsWith('data: ')) continue;
-                    const jsonStr = line.slice(6).trim();
-                    if (!jsonStr) continue;
-                    try {
-                        const event = JSON.parse(jsonStr);
-                        switch (event.type) {
-                            case 'metadata':
-                                metadata = event;
-                                updateStreamingHeader(msgDiv, event.roteamento, event.agentes_utilizados);
-                                break;
-                            case 'token':
-                                fullText += event.content;
-                                updateStreamingContent(msgDiv, fullText);
-                                scrollDown();
-                                break;
-                            case 'sources':
-                                sources = event.chunks || [];
-                                break;
-                            case 'sql':
-                                sqlData = event;
-                                break;
-                            case 'actions':
-                                actionsData = event.acoes || [];
-                                break;
-                            case 'done':
-                                piiDetected = event.pii_detected || false;
-                                dataClassification = event.data_classification || 'public';
-                                break;
-                            case 'error':
-                                serverError = event.message;
-                                break outer;
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const jsonStr = line.slice(6).trim();
+                        if (!jsonStr) continue;
+                        try {
+                            const event = JSON.parse(jsonStr);
+                            switch (event.type) {
+                                case 'metadata':
+                                    metadata = event;
+                                    updateStreamingHeader(msgDiv, event.roteamento, event.agentes_utilizados);
+                                    break;
+                                case 'token':
+                                    fullText += event.content;
+                                    updateStreamingContent(msgDiv, fullText);
+                                    scrollDown();
+                                    break;
+                                case 'sources':
+                                    sources = event.chunks || [];
+                                    break;
+                                case 'sql':
+                                    sqlData = event;
+                                    break;
+                                case 'actions':
+                                    actionsData = event.acoes || [];
+                                    break;
+                                case 'done':
+                                    piiDetected = event.pii_detected || false;
+                                    dataClassification = event.data_classification || 'public';
+                                    break outer;
+                                case 'error':
+                                    serverError = event.message;
+                                    break outer;
+                            }
+                        } catch (_) {
+                            // Skip malformed SSE events
                         }
-                    } catch (_) {
-                        // Skip malformed SSE events
                     }
                 }
+            } finally {
+                reader.cancel();
             }
 
             if (serverError) throw new Error(serverError);
