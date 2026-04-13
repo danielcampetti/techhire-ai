@@ -147,3 +147,94 @@ class TestCoordinatorProcessStream:
         ]
         assert len(done_events) == 1
         assert done_events[0]["full_response"] == "Olá mundo"
+
+
+class TestStreamEndpoint:
+
+    def _make_token(self, role: str = "analyst") -> str:
+        """Create a JWT for test auth."""
+        from src.api.auth import create_access_token
+        uid, uname = (2, "analista") if role == "analyst" else (1, "admin")
+        return create_access_token(uid, uname, role)
+
+    def test_stream_endpoint_returns_event_stream(self):
+        """POST /agent/stream returns text/event-stream content type."""
+        from fastapi.testclient import TestClient
+        from src.api.main import app
+
+        async def fake_stream(question, provider="ollama", user_id=None,
+                              username=None, conversation_history=None):
+            yield 'data: {"type": "metadata", "roteamento": "KNOWLEDGE", "agentes_utilizados": ["knowledge"]}\n\n'
+            yield 'data: {"type": "token", "content": "Olá"}\n\n'
+            yield 'data: {"type": "done", "pii_detected": false, "data_classification": "public", "session_id": "abc", "full_response": "Olá"}\n\n'
+
+        with patch("src.api.main.CoordinatorAgent") as MockCoord:
+            MockCoord.return_value.process_stream = fake_stream
+            client = TestClient(app)
+            token = self._make_token()
+            res = client.post(
+                "/agent/stream",
+                json={"pergunta": "test"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert res.status_code == 200
+            assert "text/event-stream" in res.headers.get("content-type", "")
+
+    def test_stream_endpoint_yields_expected_event_types(self):
+        """POST /agent/stream body contains metadata, token, and done events."""
+        from fastapi.testclient import TestClient
+        from src.api.main import app
+
+        async def fake_stream(question, provider="ollama", user_id=None,
+                              username=None, conversation_history=None):
+            yield 'data: {"type": "metadata", "roteamento": "DATA", "agentes_utilizados": ["data"]}\n\n'
+            yield 'data: {"type": "token", "content": "Resultado"}\n\n'
+            yield 'data: {"type": "done", "pii_detected": false, "data_classification": "confidential", "session_id": "x", "full_response": "Resultado"}\n\n'
+
+        with patch("src.api.main.CoordinatorAgent") as MockCoord:
+            MockCoord.return_value.process_stream = fake_stream
+            client = TestClient(app)
+            token = self._make_token()
+            res = client.post(
+                "/agent/stream",
+                json={"pergunta": "quantas transacoes?"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            lines = [l for l in res.text.split("\n") if l.startswith("data: ")]
+            events = [json.loads(l[6:]) for l in lines if l[6:].strip()]
+            event_types = [e["type"] for e in events]
+            assert "metadata" in event_types
+            assert "token" in event_types
+            assert "done" in event_types
+
+    def test_stream_endpoint_requires_auth(self):
+        """POST /agent/stream returns 401/403 without JWT."""
+        from fastapi.testclient import TestClient
+        from src.api.main import app
+        client = TestClient(app)
+        res = client.post("/agent/stream", json={"pergunta": "test"})
+        assert res.status_code in (401, 403)
+
+    def test_original_agent_endpoint_still_works(self):
+        """POST /agent still returns JSON (backward compat)."""
+        from fastapi.testclient import TestClient
+        from src.api.main import app
+        from src.agents.coordinator import CoordinatorResponse
+
+        mock_response = CoordinatorResponse(
+            pergunta="test", roteamento="KNOWLEDGE",
+            agentes_utilizados=["knowledge"], resposta_final="OK",
+            detalhes_agentes=[], log_id=1, provider_utilizado="ollama",
+            pii_detected=False, data_classification="public", session_id="x",
+        )
+        with patch("src.api.main.CoordinatorAgent") as MockCoord:
+            MockCoord.return_value.process = AsyncMock(return_value=mock_response)
+            client = TestClient(app)
+            token = self._make_token()
+            res = client.post(
+                "/agent",
+                json={"pergunta": "test"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert res.status_code == 200
+            assert res.json()["resposta_final"] == "OK"

@@ -11,11 +11,12 @@ Endpoints:
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import List, Optional, Union
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 _TEMPLATE_PATH  = Path(__file__).parent / "templates" / "index.html"
@@ -240,6 +241,81 @@ async def agent_endpoint(
         )
 
     return response
+
+
+@app.post("/agent/stream")
+async def agent_stream_endpoint(
+    request: AgentRequest,
+    current_user: TokenUser = Depends(require_role("analyst", "manager")),
+) -> StreamingResponse:
+    """Stream agent response via Server-Sent Events.
+
+    Mirrors /agent's auth, conversation_id handling, and message persistence.
+    The original POST /agent endpoint is unchanged for backward compatibility.
+    """
+    provider = (request.provider or settings.llm_provider).lower()
+    coordinator = CoordinatorAgent()
+    svc = ConversationService()
+
+    conversation_history = None
+    if request.conversation_id is not None:
+        if svc.get_by_id(request.conversation_id, current_user.user_id) is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Conversa não encontrada ou sem permissão de acesso.",
+            )
+        conversation_history = svc.get_context_messages(
+            request.conversation_id, max_messages=10
+        )
+        is_first_message = len(conversation_history) == 0
+        svc.add_message(request.conversation_id, "user", request.pergunta)
+        if is_first_message:
+            svc.update_title(
+                request.conversation_id,
+                current_user.user_id,
+                ConversationService.auto_title(request.pergunta),
+            )
+
+    async def event_generator():
+        full_response = ""
+        try:
+            async for event in coordinator.process_stream(
+                request.pergunta,
+                provider=provider,
+                user_id=current_user.user_id,
+                username=current_user.username,
+                conversation_history=conversation_history,
+            ):
+                if '"type": "done"' in event or '"type":"done"' in event:
+                    try:
+                        data = json.loads(event.replace("data: ", "", 1).strip())
+                        full_response = data.get("full_response", "")
+                    except Exception:
+                        pass
+                yield event
+        except Exception as exc:
+            yield f'data: {json.dumps({"type": "error", "message": str(exc)})}\n\n'
+
+        if request.conversation_id is not None and full_response:
+            svc.add_message(
+                request.conversation_id,
+                "assistant",
+                full_response,
+                agent_used=None,
+                provider=provider,
+                data_classification=None,
+                pii_detected=False,
+            )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/alerts")
