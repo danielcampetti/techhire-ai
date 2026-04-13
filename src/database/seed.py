@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from src.database.connection import get_db
-from src.database.setup import create_tables
+from src.database.setup import create_tables, migrate_audit_log_add_user_columns
 
 _TODAY = datetime(2025, 4, 12)
 
@@ -123,10 +123,32 @@ def seed_database() -> None:
             )
 
 
+def seed_users() -> None:
+    """Seed admin + analista users if table is empty. Local import avoids circular dep."""
+    from src.api.auth import hash_password
+    from datetime import datetime, timezone
+    with get_db() as conn:
+        if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] > 0:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        conn.executemany(
+            "INSERT INTO users (username, password_hash, full_name, role, created_at) VALUES (?,?,?,?,?)",
+            [
+                ("admin",    hash_password("admin123"),    "Administrador",          "manager", now),
+                ("analista", hash_password("analista123"), "Analista de Compliance", "analyst",  now),
+            ],
+        )
+    print("=" * 60)
+    print("  DEFAULT USERS: admin/admin123 (manager), analista/analista123 (analyst)")
+    print("=" * 60)
+
+
 def init_db() -> None:
     """Create tables and seed if the DB file does not yet contain data."""
     create_tables()
+    migrate_audit_log_add_user_columns()
     seed_database()
+    seed_users()
 
 
 if __name__ == "__main__":
