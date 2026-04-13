@@ -64,15 +64,16 @@ async def test_coordinator_threads_provider_to_knowledge_agent():
     mock_k_resp.data = None
     mock_k_resp.actions_taken = []
     mock_k_resp.agent_name = "knowledge"
+    mock_k_resp.chunks_count = 0
 
     with patch("src.agents.coordinator.init_db"), \
          patch("src.agents.coordinator.CoordinatorAgent._classify", new_callable=AsyncMock, return_value="KNOWLEDGE"), \
-         patch("src.agents.coordinator.CoordinatorAgent._log", return_value=1):
+         patch("src.agents.coordinator.audit.log_interaction", new_callable=AsyncMock, return_value=1):
         coordinator = CoordinatorAgent()
         coordinator.knowledge_agent = MagicMock()
         coordinator.knowledge_agent.answer = AsyncMock(return_value=mock_k_resp)
 
         result = await coordinator.process("Qual o prazo?", provider="claude")
 
-    coordinator.knowledge_agent.answer.assert_awaited_once_with("Qual o prazo?", provider="claude")
+    coordinator.knowledge_agent.answer.assert_awaited_once_with("Qual o prazo?", provider="claude", conversation_history=None)
     assert result.provider_utilizado == "claude"

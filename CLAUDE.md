@@ -157,6 +157,17 @@ Frontend: blinking gold cursor appears immediately on send; tokens render word-b
 
 - **NEVER use git worktrees.** Always work directly on `master` or create simple feature branches with `git checkout -b feature/xxx`. Worktrees cause environment fragmentation (missing `.env`, missing DB, missing indexed documents) and should not be used in this project.
 
+## CI/CD
+
+GitHub Actions runs on every push to `master` and every pull request.
+
+- **Workflow:** `.github/workflows/ci.yml`
+- **What it does:** Runs `python -m pytest tests/ --ignore=tests/diagnose_rag.py -v --tb=short --timeout=60` on Python 3.11 and 3.13 with pip dependency caching
+- **No secrets needed:** All config has safe defaults or Optional fallbacks; all external services (Ollama, ChromaDB, Anthropic) are mocked in tests
+- **diagnose_rag.py is excluded:** It makes real Ollama/ChromaDB calls and is not a pytest test
+- **Before pushing:** Run `python -m pytest tests/ --ignore=tests/diagnose_rag.py -v --tb=short` locally and confirm 0 failures
+- **Badge:** Add to README after setting up the GitHub remote: `![CI](https://github.com/YOUR_USER/YOUR_REPO/actions/workflows/ci.yml/badge.svg)`
+
 ## Architecture Decisions
 
 - **Local-first:** Zero cloud dependency. Ollama for LLM, sentence-transformers for embeddings.
@@ -208,6 +219,7 @@ Frontend: blinking gold cursor appears immediately on send; tokens render word-b
 | src/api/conversation_routes.py | ✅ Done |
 | src/llm/llm_router.py | ✅ Done |
 | tests/test_streaming.py | ✅ Done |
+| .github/workflows/ci.yml | ✅ Done |
 
 ## Running Locally (Phase 1)
 

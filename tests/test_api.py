@@ -10,6 +10,16 @@ def _get_client() -> TestClient:
     return TestClient(app)
 
 
+def _analyst_token() -> str:
+    from src.api.auth import create_access_token
+    return create_access_token(1, "analista", "analyst")
+
+
+def _manager_token() -> str:
+    from src.api.auth import create_access_token
+    return create_access_token(1, "admin", "manager")
+
+
 def test_ingest_no_pdfs_returns_zero_count(tmp_path) -> None:
     with patch("src.api.main.settings") as mock_cfg, \
          patch("src.api.main.load_all_pdfs", return_value=[]):
@@ -18,7 +28,7 @@ def test_ingest_no_pdfs_returns_zero_count(tmp_path) -> None:
         mock_cfg.chunk_overlap = 100
 
         client = _get_client()
-        response = client.post("/ingest")
+        response = client.post("/ingest", headers={"Authorization": f"Bearer {_manager_token()}"})
 
     assert response.status_code == 200
     assert response.json()["chunks_indexados"] == 0
@@ -46,7 +56,7 @@ def test_ingest_with_pdfs_returns_chunk_count(tmp_path) -> None:
         mock_cfg.chunk_overlap = 100
 
         client = _get_client()
-        response = client.post("/ingest")
+        response = client.post("/ingest", headers={"Authorization": f"Bearer {_manager_token()}"})
 
     assert response.status_code == 200
     assert response.json()["chunks_indexados"] == 2
@@ -66,7 +76,11 @@ def test_chat_returns_answer_with_sources() -> None:
          patch("src.api.main.settings") as mock_cfg:
         mock_cfg.llm_provider = "ollama"
         client = _get_client()
-        response = client.post("/chat", json={"pergunta": "O que e compliance?"})
+        response = client.post(
+            "/chat",
+            json={"pergunta": "O que e compliance?"},
+            headers={"Authorization": f"Bearer {_analyst_token()}"},
+        )
 
     assert response.status_code == 200
     body = response.json()
@@ -79,7 +93,11 @@ def test_chat_returns_answer_with_sources() -> None:
 def test_chat_no_results_returns_not_found_message() -> None:
     with patch("src.api.main.retrieve", return_value=[]):
         client = _get_client()
-        response = client.post("/chat", json={"pergunta": "pergunta sem resultado"})
+        response = client.post(
+            "/chat",
+            json={"pergunta": "pergunta sem resultado"},
+            headers={"Authorization": f"Bearer {_analyst_token()}"},
+        )
 
     assert response.status_code == 200
     assert "nao foi encontrada" in response.json()["resposta"]
@@ -89,7 +107,7 @@ def test_list_documents_returns_document_list() -> None:
     with patch("src.api.main._get_chroma_client"), \
          patch("src.api.main.list_indexed_documents", return_value=[{"source": "norma.pdf", "title": "Norma"}]):
         client = _get_client()
-        response = client.get("/documents")
+        response = client.get("/documents", headers={"Authorization": f"Bearer {_analyst_token()}"})
 
     assert response.status_code == 200
     body = response.json()
@@ -157,6 +175,10 @@ def test_chat_returns_503_when_claude_key_missing() -> None:
          patch("src.api.main.claude_client.generate", new_callable=AsyncMock,
                side_effect=ValueError("ANTHROPIC_API_KEY não configurado")):
         client = _get_client()
-        response = client.post("/chat", json={"pergunta": "O que é compliance?", "provider": "claude"})
+        response = client.post(
+            "/chat",
+            json={"pergunta": "O que é compliance?", "provider": "claude"},
+            headers={"Authorization": f"Bearer {_analyst_token()}"},
+        )
 
     assert response.status_code == 503

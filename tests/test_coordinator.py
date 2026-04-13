@@ -127,7 +127,8 @@ class TestCoordinatorProcess:
         with patch("src.agents.coordinator.llm_router.generate",
                    new_callable=AsyncMock, return_value="KNOWLEDGE"), \
              patch("src.agents.coordinator.init_db"), \
-             patch.object(coord, "_log", return_value=1):
+             patch("src.agents.coordinator.audit.log_interaction",
+                   new_callable=AsyncMock, return_value=1):
             result = await coord.process("Qual o prazo da Resolução 5.274?")
 
         assert isinstance(result, CoordinatorResponse)
@@ -150,7 +151,8 @@ class TestCoordinatorProcess:
         with patch("src.agents.coordinator.llm_router.generate",
                    new_callable=AsyncMock, return_value="DATA"), \
              patch("src.agents.coordinator.init_db"), \
-             patch.object(coord, "_log", return_value=2):
+             patch("src.agents.coordinator.audit.log_interaction",
+                   new_callable=AsyncMock, return_value=2):
             result = await coord.process("Quantas transações temos?")
 
         assert result.roteamento == "DATA"
