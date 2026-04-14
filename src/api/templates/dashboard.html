@@ -773,7 +773,9 @@ async function uploadFiles(type) {
     const statusId = type === 'resume' ? 'resume-status' : 'job-status';
     const progressId = type === 'resume' ? 'resume-progress' : 'job-progress';
     const fillId = type === 'resume' ? 'resume-progress-fill' : 'job-progress-fill';
-    const endpoint = type === 'resume' ? '/ingest' : '/ingest/job';
+    // Both types go to /ingest — classify_document() handles routing to
+    // the correct ChromaDB collection (resumes vs job_postings) automatically.
+    const endpoint = '/ingest';
 
     const input = document.getElementById(inputId);
     const files = input._droppedFiles || Array.from(input.files);
@@ -806,8 +808,10 @@ async function uploadFiles(type) {
 
         if (r.status === 401 || r.status === 403) { location.href = '/login'; return; }
         if (!r.ok) {
-            const err = await r.json().catch(() => ({ detail: 'Erro desconhecido' }));
-            throw new Error(err.detail || 'HTTP ' + r.status);
+            const text = await r.text().catch(() => '');
+            let detail = 'HTTP ' + r.status;
+            try { detail = JSON.parse(text).detail || detail; } catch (_) {}
+            throw new Error(detail);
         }
 
         const data = await r.json();
