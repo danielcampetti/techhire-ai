@@ -64,6 +64,48 @@ _COMMON_SKILLS = [
     "git", "api", "rest", "graphql", "microservices", "linux",
 ]
 
+# Multi-word skill taxonomy used for job-centric scoring.
+# Order matters: longer phrases first so "docker compose" is checked before "docker".
+_SKILL_TAXONOMY: list[str] = [
+    # AI/ML — compound phrases first
+    "model context protocol", "mcp", "prompt engineering", "fine-tuning", "fine tuning",
+    "sentence transformers", "cross-encoder", "cross encoders",
+    "vector search", "machine learning", "deep learning",
+    "multi-agent", "multi-agente", "llmops", "mlops",
+    "github actions", "docker compose", "ci/cd",
+    # AI/ML — single tokens
+    "rag", "llm", "llms", "embedding", "embeddings",
+    "chromadb", "faiss", "opensearch", "langchain", "agno",
+    "ollama", "openai", "pytorch", "tensorflow", "scikit-learn",
+    "nlp", "evals", "lora", "rlhf", "lgpd", "pii",
+    # Infra / DevOps
+    "kubernetes", "docker", "terraform", "aws", "gcp", "azure",
+    "airflow", "pyspark", "kafka", "prometheus", "grafana",
+    # Languages / Frameworks
+    "python", "typescript", "javascript", "fastapi", "django", "flask",
+    "asyncio", "pydantic", "sqlalchemy", "go", "rust",
+    # Database
+    "postgresql", "redis", "mongodb", "sqlite",
+    # APIs / Streaming
+    "graphql", "rest", "jwt", "oauth", "sse",
+    # Testing / Quality
+    "pytest", "tdd",
+    # Misc
+    "git", "sql",
+]
+
+# Regex patterns that signal leadership / senior ownership
+_LEADERSHIP_RE = re.compile(
+    r"liderei|liderou|tech.?lead|staff\b|principal\b|arquiteto|arquiteta|"
+    r"mentorei|coordenei|equipe\s+de\s+\d",
+    re.IGNORECASE,
+)
+# Regex patterns that signal production-scale work
+_SCALE_RE = re.compile(
+    r"\d{3}[.\d]*\d{3}\+?|\b\d+k\+?\b|produção|production|100k|500k|milh|bilh",
+    re.IGNORECASE,
+)
+
 
 _PDF_NAME_PREFIX = re.compile(r"^(curriculo|curriculum|cv|resume|lattes)[_\-\s]?", re.IGNORECASE)
 _JOB_FILENAME_RE = re.compile(r"^(vaga|job|position|cargo|oferta)[_\-\s.]", re.IGNORECASE)
@@ -135,37 +177,78 @@ def _extract_job_data(filename: str, full_text: str) -> dict:
 
 
 def _score_candidate_vs_job(cand: dict, job: dict, now: str) -> None:
-    """Calculate and upsert a match score row for one candidate×job pair."""
-    # Substring matching: for each candidate skill, check if it appears anywhere
-    # in the requirements text. This avoids bag-of-words fragmentation issues
-    # (e.g. "LLMs" in requirements matching "llm" in skills, "RAG pipelines"
-    # matching "rag", etc.) and scales correctly with the skills list size.
-    req_lower = (
+    """Calculate and upsert a match score row for one candidate×job pair.
+
+    Scoring model (weights sum to 1.0):
+      skills_score      0.40  — job-centric: % of job's required skills the
+                                candidate covers (searched in full resume_text)
+      experience_score  0.35  — normalized so exceeding 2× req = 1.0, meeting
+                                req exactly = 0.50, rewarding seniority clearly
+      education_score   0.15  — PhD 1.0 / MSc 0.90 / BSc 0.75 / other 0.70;
+                                falls back to resume_text when column is NULL
+      bonus_score       0.10  — 0.5 for leadership signals + 0.5 for scale signals
+    """
+    job_text_lower = (
         (job["requirements"] or "") + " " + (job["desired_skills"] or "")
     ).lower()
-    try:
-        cand_skills = [s.lower() for s in json.loads(cand["skills"] or "[]")]
-    except Exception:
-        cand_skills = []
+    resume_lower = (cand.get("resume_text") or "").lower()
 
-    if cand_skills:
-        matched = sum(1 for s in cand_skills if s in req_lower)
-        skills_score = matched / len(cand_skills)
+    # ── 1. Skills score (job-centric) ──────────────────────────────────────
+    # Find which taxonomy skills the job actually requires, then check how many
+    # of those appear in the candidate's full resume text.  This means a
+    # candidate with MORE relevant skills scores HIGHER, not lower.
+    job_required_skills = [s for s in _SKILL_TAXONOMY if s in job_text_lower]
+    if job_required_skills and resume_lower:
+        matched = sum(1 for s in job_required_skills if s in resume_lower)
+        skills_score = matched / len(job_required_skills)
     else:
-        skills_score = 0.3  # no skills data extracted
+        # Fallback: old method (candidate skills ∩ job text)
+        try:
+            cand_skills = [s.lower() for s in json.loads(cand["skills"] or "[]")]
+        except Exception:
+            cand_skills = []
+        if cand_skills:
+            matched = sum(1 for s in cand_skills if s in job_text_lower)
+            skills_score = matched / len(cand_skills)
+        else:
+            skills_score = 0.3
 
+    # ── 2. Experience score (seniority-aware) ──────────────────────────────
+    # Normalize so candidate_years == 2× req_years → 1.0; meeting req → 0.5.
+    # This creates clear separation between Pleno (4yr, req 4yr) and
+    # Staff (8yr, req 4yr): 0.50 vs 1.0.
     req_exp = 3
-    em = re.search(r"(\d+)\+?\s*anos", job["requirements"] or "", re.IGNORECASE)
+    em = re.search(r"(\d+)\+?\s*anos", job_text_lower, re.IGNORECASE)
     if em:
         req_exp = int(em.group(1))
-    experience_score = min((cand["experience_years"] or 0) / max(req_exp, 1), 1.0)
+    candidate_years = cand["experience_years"] or 0
+    experience_score = min(candidate_years / max(req_exp, 1), 2.0) / 2.0
 
+    # ── 3. Education score ─────────────────────────────────────────────────
     edu = (cand["education"] or "").lower()
-    education_score = 1.0 if ("doutorado" in edu or "phd" in edu) else \
-                      0.9 if ("mestrado" in edu or "mba" in edu) else \
-                      0.75 if ("bacharelado" in edu or "graduação" in edu or "graduacao" in edu) else 0.7
+    # Fall back to resume_text when the column is NULL (most uploaded resumes)
+    edu_src = edu if edu else resume_lower
+    education_score = (
+        1.00 if ("doutorado" in edu_src or "phd" in edu_src) else
+        0.90 if ("mestrado" in edu_src or "mba" in edu_src) else
+        0.75 if ("bacharelado" in edu_src or "bacharel" in edu_src
+                 or "graduação" in edu_src or "graduacao" in edu_src) else
+        0.70
+    )
 
-    overall = round(0.5 * skills_score + 0.3 * experience_score + 0.2 * education_score, 4)
+    # ── 4. Bonus: leadership + production-scale signals ────────────────────
+    leadership_hit = bool(_LEADERSHIP_RE.search(resume_lower)) if resume_lower else False
+    scale_hit = bool(_SCALE_RE.search(resume_lower)) if resume_lower else False
+    bonus_score = (0.5 if leadership_hit else 0.0) + (0.5 if scale_hit else 0.0)
+
+    # ── Final score ────────────────────────────────────────────────────────
+    overall = round(
+        0.40 * skills_score
+        + 0.35 * experience_score
+        + 0.15 * education_score
+        + 0.10 * bonus_score,
+        4,
+    )
 
     with get_db() as conn:
         existing = conn.execute(
@@ -453,7 +536,6 @@ async def ingest(
     # ── Auto-calculate match scores for new data ──────────────────────
     scores_written = _recalculate_matches(
         new_candidate_ids=new_candidate_ids or None,
-        new_job_ids=new_job_ids or None,
         target_job_ids=[job_posting_id] if job_posting_id and new_candidate_ids else None,
     )
 
@@ -719,70 +801,10 @@ async def calculate_matches(
             "SELECT * FROM candidates WHERE is_active = 1"
         ).fetchall()
 
-    required_skills = set(
-        s.strip().lower()
-        for s in (job["requirements"] or "").replace(",", " ").split()
-        if len(s.strip()) > 2
-    )
-
     calculated = 0
-    with get_db() as conn:
-        for cand in candidates:
-            import json as _json
-            try:
-                cand_skills = set(s.lower() for s in _json.loads(cand["skills"] or "[]"))
-            except Exception:
-                cand_skills = set()
-
-            skills_score = (
-                len(cand_skills & required_skills) / len(required_skills)
-                if required_skills else 0.5
-            )
-
-            req_exp = 3  # default
-            import re as _re
-            exp_match = _re.search(r"(\d+)\+?\s*anos", job["requirements"] or "", _re.IGNORECASE)
-            if exp_match:
-                req_exp = int(exp_match.group(1))
-            exp_years = cand["experience_years"] or 0
-            experience_score = min(exp_years / max(req_exp, 1), 1.0)
-
-            education_score = 0.7
-            edu = (cand["education"] or "").lower()
-            if "doutorado" in edu or "phd" in edu:
-                education_score = 1.0
-            elif "mestrado" in edu or "mba" in edu:
-                education_score = 0.9
-            elif "bacharelado" in edu or "graduação" in edu or "graduacao" in edu:
-                education_score = 0.75
-
-            overall_score = round(
-                0.5 * skills_score + 0.3 * experience_score + 0.2 * education_score, 4
-            )
-
-            existing = conn.execute(
-                "SELECT id FROM matches WHERE candidate_id=? AND job_posting_id=?",
-                (cand["id"], job_id),
-            ).fetchone()
-
-            if existing:
-                conn.execute(
-                    """UPDATE matches SET overall_score=?, skills_score=?,
-                       experience_score=?, education_score=?, created_at=?
-                       WHERE candidate_id=? AND job_posting_id=?""",
-                    (overall_score, skills_score, experience_score, education_score,
-                     now, cand["id"], job_id),
-                )
-            else:
-                conn.execute(
-                    """INSERT INTO matches
-                       (candidate_id, job_posting_id, overall_score, skills_score,
-                        experience_score, education_score, created_at)
-                       VALUES (?,?,?,?,?,?,?)""",
-                    (cand["id"], job_id, overall_score, skills_score,
-                     experience_score, education_score, now),
-                )
-            calculated += 1
+    for cand in candidates:
+        _score_candidate_vs_job(dict(cand), dict(job), now)
+        calculated += 1
 
     return {
         "mensagem": f"Scores calculados para {calculated} candidatos.",
