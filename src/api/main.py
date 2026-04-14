@@ -65,9 +65,26 @@ _COMMON_SKILLS = [
 ]
 
 
+_PDF_NAME_PREFIX = re.compile(r"^(curriculo|curriculum|cv|resume|lattes)[_\-\s]?", re.IGNORECASE)
+
+
 def _extract_candidate_data(filename: str, full_text: str) -> dict:
     """Parse candidate metadata from filename and raw PDF text."""
-    name = filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").title()
+    # Strip common prefixes (curriculo_, cv_, resume_) from filename-based name
+    stem = filename.rsplit(".", 1)[0]
+    stem = _PDF_NAME_PREFIX.sub("", stem)
+    name = stem.replace("_", " ").replace("-", " ").title().strip() or filename
+
+    # Try to use the first non-empty line of the PDF if it looks like a proper name
+    for line in full_text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        words = line.split()
+        if 2 <= len(words) <= 5 and re.match(r"^[A-Za-zÀ-ÿ\s]+$", line):
+            name = line.title()
+        break  # only check the very first non-empty line
+
     lower = full_text.lower()
     skills = [s for s in _COMMON_SKILLS if s in lower]
     m = re.search(r"(\d+)\+?\s*anos?\s+de\s+experi", lower)
@@ -93,20 +110,23 @@ def _extract_job_data(filename: str, full_text: str) -> dict:
 
 def _score_candidate_vs_job(cand: dict, job: dict, now: str) -> None:
     """Calculate and upsert a match score row for one candidate×job pair."""
-    required_skills = set(
-        s.strip().lower()
-        for s in (job["requirements"] or "").replace(",", " ").split()
-        if len(s.strip()) > 2
-    )
+    # Substring matching: for each candidate skill, check if it appears anywhere
+    # in the requirements text. This avoids bag-of-words fragmentation issues
+    # (e.g. "LLMs" in requirements matching "llm" in skills, "RAG pipelines"
+    # matching "rag", etc.) and scales correctly with the skills list size.
+    req_lower = (
+        (job["requirements"] or "") + " " + (job["desired_skills"] or "")
+    ).lower()
     try:
-        cand_skills = set(s.lower() for s in json.loads(cand["skills"] or "[]"))
+        cand_skills = [s.lower() for s in json.loads(cand["skills"] or "[]")]
     except Exception:
-        cand_skills = set()
+        cand_skills = []
 
-    skills_score = (
-        len(cand_skills & required_skills) / len(required_skills)
-        if required_skills else 0.5
-    )
+    if cand_skills:
+        matched = sum(1 for s in cand_skills if s in req_lower)
+        skills_score = matched / len(cand_skills)
+    else:
+        skills_score = 0.3  # no skills data extracted
 
     req_exp = 3
     em = re.search(r"(\d+)\+?\s*anos", job["requirements"] or "", re.IGNORECASE)
