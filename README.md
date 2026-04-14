@@ -3,11 +3,11 @@
 ![CI](https://github.com/danielcampetti/techhire-ai/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Tests](https://img.shields.io/badge/Tests-149%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-144%20passing-brightgreen)
 
 **Sistema multi-agente de triagem inteligente de currículos com RAG, LGPD e streaming em tempo real.**
 
-Plataforma de recrutamento que ingere currículos e vagas em PDF, processa em banco vetorial e responde perguntas com citações precisas — orquestrando múltiplos agentes especializados para análise de perfis, ranking por aderência e gestão do funil de contratação.
+Plataforma de recrutamento que ingere currículos e vagas em PDF, processa em banco vetorial e responde perguntas em linguagem natural com citações precisas — orquestrando múltiplos agentes especializados para análise de perfis, ranking por aderência e gestão do funil de contratação.
 
 ---
 
@@ -15,25 +15,45 @@ Plataforma de recrutamento que ingere currículos e vagas em PDF, processa em ba
 
 ```
 PDF (currículos / vagas)
-    → pdf_loader → chunker → embedder (ChromaDB: "resumes" | "job_postings")
+    → pdf_loader → chunker → embedder
+        → ChromaDB "resumes"       (currículos)
+        → ChromaDB "job_postings"  (vagas)
 
-Pergunta do recrutador
-    → CoordinatorAgent (roteamento por palavras-chave, zero LLM)
-        → ResumeAgent  — RAG sobre currículos (ChromaDB)
-        → MatchAgent   — NL→SQL→SQLite→NL (scores de aderência)
-        → PipelineAgent — mover etapas, funil, e-mail de feedback
+Pergunta do recrutador → CoordinatorAgent (roteamento por palavras-chave, zero LLM)
+    → ResumeAgent    — RAG sobre ChromaDB "resumes"
+    → MatchAgent     — NL→SQL→SQLite→NL (scores de aderência)
+    → PipelineAgent  — mover etapas, funil, e-mail de feedback
+    → Resume+Match   — perfil + score combinados
 
-Resposta com fontes → SSE streaming → frontend (vanilla JS)
+Resposta → SSE streaming → frontend (vanilla JS)
 ```
 
-### Componentes
-
-| Componente | Responsabilidade |
-|------------|-----------------|
-| `ResumeAgent` | RAG sobre a coleção `resumes` do ChromaDB |
-| `MatchAgent` | Gera SQL → executa → interpreta contra tabelas `matches`/`candidates` |
-| `PipelineAgent` | Gerencia estágios (triagem → entrevista → teste_técnico → aprovado) |
-| `CoordinatorAgent` | Classifica a intent via heurística de palavras-chave (RESUME / MATCH / PIPELINE / RESUME+MATCH) |
+```
+┌─────────────┐     ┌─────────────────────────────────────────────────────┐
+│  Frontend   │     │                     Backend                         │
+│  (HTML/JS)  │────▶│  ┌─────────────┐   ┌──────────────────────────┐   │
+│             │ SSE │  │  FastAPI    │   │    CoordinatorAgent       │   │
+│ • Login     │◀────│  │  + JWT Auth │──▶│   (keyword routing)      │   │
+│ • Chat      │     │  └─────────────┘   └──────────┬───┬───┬───────┘   │
+│ • Dashboard │     │                               │   │   │            │
+│ • Scorecard │     │                ┌──────────────┘   │   └──────────┐ │
+│             │     │                ▼                  ▼              ▼ │
+└─────────────┘     │  ┌──────────────┐  ┌──────────┐  ┌──────────────┐ │
+                    │  │ ResumeAgent  │  │  Match   │  │   Pipeline   │ │
+                    │  │  (RAG/vec.)  │  │  Agent   │  │    Agent     │ │
+                    │  └──────┬───────┘  └────┬─────┘  └──────┬───────┘ │
+                    │         │               │               │          │
+                    │  ┌──────▼───────┐  ┌────▼─────┐  ┌─────▼────────┐ │
+                    │  │  ChromaDB    │  │  SQLite  │  │   SQLite     │ │
+                    │  │ (vetores)    │  │ (scores) │  │  (pipeline)  │ │
+                    │  └──────────────┘  └──────────┘  └──────────────┘ │
+                    │                                                     │
+                    │  ┌──────────────────────────────────────────────┐  │
+                    │  │              Governança LGPD                  │  │
+                    │  │  PII Detector → Audit Log → Retention Manager│  │
+                    │  └──────────────────────────────────────────────┘  │
+                    └─────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -46,50 +66,73 @@ Resposta com fontes → SSE streaming → frontend (vanilla JS)
 | LLM (alternativo) | Anthropic Claude (claude-sonnet-4-6) |
 | Embeddings | sentence-transformers (all-MiniLM-L6-v2) — local |
 | Reranking | cross-encoder/mmarco-mMiniLMv2-L12-H384-v1 — multilíngue |
-| Banco vetorial | ChromaDB (file-based, persistente) |
+| Banco vetorial | ChromaDB (file-based, persistente) — dual collections |
 | Banco de dados | SQLite (`data/techhire.db`) |
 | API | FastAPI |
 | Framework de agentes | Implementação própria (sem LangChain/LangGraph) |
 | Auth | JWT (PyJWT + bcrypt), RBAC (analyst / manager) |
 | Frontend | HTML/JS/CSS vanilla (sem React) |
 | Containerização | Docker + Docker Compose |
-| CI/CD | GitHub Actions (Python 3.11 + 3.13, 149 testes) |
+| CI/CD | GitHub Actions (Python 3.11 + 3.13, 144 testes) |
 
 ---
 
 ## Funcionalidades
 
-### Triagem de Currículos
-Faça perguntas em linguagem natural sobre qualquer candidato indexado:
+### Triagem de Currículos (RAG)
+Perguntas em linguagem natural sobre qualquer candidato indexado:
 ```
 "Quais candidatos têm experiência com RAG e Python?"
-"Qual é a formação do candidato Lucas Mendes?"
-"Liste os engenheiros sêniores com mais de 5 anos de experiência."
+"Liste os engenheiros com mais de 5 anos em backend."
+"Qual é a formação do candidato mais recente?"
 ```
 
-### Ranking por Aderência
-O MatchAgent consulta os scores pré-calculados via SQL:
+### Ranking por Aderência (NL→SQL)
+O MatchAgent converte linguagem natural em SQL e interpreta os resultados:
 ```
 "Rankeie os top 5 candidatos para a vaga de Engenheiro de IA."
-"Qual o score de aderência da Ana Beatriz para a vaga backend?"
 "Compare os candidatos com score acima de 0.85."
+"Qual candidato tem o melhor score de habilidades técnicas?"
 ```
 
+### Scorecard por Candidato
+Detalhamento completo do score de um candidato para uma vaga, com breakdown por dimensão e evidências utilizadas no cálculo.
+
 ### Gestão do Pipeline
-Mova candidatos entre etapas, gere relatórios do funil, envie feedback:
 ```
-"Mova o candidato #3 para entrevista."
+"Mova o candidato para entrevista."
 "Qual o status atual do funil de contratação?"
-"Gere um e-mail de feedback para o candidato #7."
+"Gere um e-mail de feedback de rejeição."
 ```
 
 ### Multi-LLM
-Troque entre Ollama (local, zero custo) e Claude por requisição:
+Troque entre Ollama (local) e Claude por requisição, via parâmetro `provider`:
 ```bash
-curl -X POST http://localhost:8000/chat \
+curl -X POST http://localhost:8000/agent \
   -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
   -d '{"pergunta": "Quem tem experiência com RAG?", "provider": "claude"}'
 ```
+
+---
+
+## Algoritmo de Scoring
+
+Cada candidato é pontuado contra cada vaga em quatro dimensões independentes:
+
+| Dimensão | Peso | Como é calculada |
+|----------|------|-----------------|
+| Habilidades (`skills_score`) | **40%** | Interseção entre skills do candidato e requisitos da vaga; normalizada pelo conjunto maior |
+| Experiência (`experience_score`) | **35%** | Razão entre anos do candidato e anos exigidos, com cap em 1.0 |
+| Educação (`education_score`) | **15%** | Escala ordinal: pós-graduação (1.0) → graduação (0.90) → técnico (0.75) → cursando (0.70) |
+| Bônus sênior (`bonus_score`) | **10%** | Detecta liderança técnica e experiência em escala; 0.5 por critério atendido |
+
+**Score final:**
+```
+overall = 0.40 × skills + 0.35 × experience + 0.15 × education + 0.10 × bonus
+```
+
+O endpoint `GET /matches/{candidate_id}/{job_posting_id}/details` retorna o breakdown completo com evidências (skills correspondidas, anos detectados, nível de educação encontrado) para cada dimensão.
 
 ---
 
@@ -97,44 +140,44 @@ curl -X POST http://localhost:8000/chat \
 
 ### Docker (recomendado)
 ```bash
-# Suba tudo com um comando
 docker compose up --build
 
-# Na primeira execução, baixe o modelo Ollama
+# Na primeira execução, baixe o modelo:
 docker compose exec ollama ollama pull llama3:8b
 
-# Acesse em http://localhost:8000/login
-# Credenciais: analyst/analyst123 ou manager/manager123
+# Acesse: http://localhost:8000/login
+# Credenciais: analyst/analyst123  ou  manager/manager123
 ```
 
 ### Execução local
 ```bash
 pip install -r requirements.txt
 
-# Inicie o Ollama separadamente
 ollama serve
 ollama pull llama3:8b
 
-# (Opcional) Claude como backend
-export ANTHROPIC_API_KEY=sk-ant-...
+export ANTHROPIC_API_KEY=sk-ant-...   # opcional
 
 uvicorn src.api.main:app --reload
-# Acesse http://localhost:8000/login
+# Acesse: http://localhost:8000/login
 ```
 
 ### Ingestão de PDFs
 ```bash
-# Coloque PDFs em data/raw/ e execute:
-MANAGER_TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
-  -d "username=manager&password=manager123" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+# Coloque PDFs em data/raw/ e execute (requer role manager):
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+  -d "username=manager&password=manager123" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
 curl -X POST http://localhost:8000/ingest \
-  -H "Authorization: Bearer $MANAGER_TOKEN"
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ---
 
 ## Endpoints
+
+Todos os endpoints (exceto `/`, `/login`, `/dashboard` e `POST /auth/login`) exigem `Authorization: Bearer <token>`.
 
 ### Auth
 | Método | Path | Papel | Descrição |
@@ -144,22 +187,29 @@ curl -X POST http://localhost:8000/ingest \
 | POST | /auth/register | manager | Criar novo usuário |
 
 ### Chat & Agentes
-| Método | Path | Papel | Descrição |
-|--------|------|-------|-----------|
-| POST | /chat | analyst, manager | Resposta RAG com citações |
-| POST | /agent | analyst, manager | Roteamento multi-agente, JSON completo |
-| POST | /agent/stream | analyst, manager | Streaming SSE multi-agente |
+| Método | Path | Descrição |
+|--------|------|-----------|
+| POST | /chat | Resposta RAG com citações (JSON) |
+| POST | /agent | Roteamento multi-agente, resposta completa |
+| POST | /agent/stream | Streaming SSE multi-agente |
 
-### Dados
+### Currículos & Candidatos
 | Método | Path | Papel | Descrição |
 |--------|------|-------|-----------|
-| POST | /ingest | manager | Indexar PDFs de data/raw/ |
-| GET | /resumes | analyst, manager | Listar currículos indexados |
-| GET | /candidates | analyst, manager | Listar candidatos (BD) |
-| GET | /job-postings | analyst, manager | Listar vagas |
-| GET | /pipeline | analyst, manager | Listar funil de contratação |
-| GET | /matches/{job_id} | analyst, manager | Ranking de candidatos por vaga |
-| POST | /match/{job_id} | manager | Calcular scores para uma vaga |
+| POST | /ingest | manager | Indexar PDFs de `data/raw/` no ChromaDB |
+| POST | /ingest/job | manager | Indexar uma vaga (texto ou PDF) |
+| GET | /resumes | qualquer | Listar currículos indexados no ChromaDB |
+| GET | /resumes/{id}/download | qualquer | Baixar PDF original do candidato |
+| GET | /candidates | qualquer | Listar candidatos do banco de dados |
+| GET | /job-postings | qualquer | Listar vagas cadastradas |
+
+### Scores & Pipeline
+| Método | Path | Papel | Descrição |
+|--------|------|-------|-----------|
+| GET | /matches/{job_id} | qualquer | Ranking de candidatos para uma vaga |
+| GET | /matches/{cand_id}/{job_id}/details | qualquer | Breakdown completo do score |
+| POST | /match/{job_id} | manager | Calcular/recalcular scores para uma vaga |
+| GET | /pipeline | qualquer | Listar funil de contratação |
 | PATCH | /pipeline/{cand_id}/{job_id} | manager | Mover candidato de etapa |
 
 ### Governança LGPD (apenas manager)
@@ -173,20 +223,20 @@ curl -X POST http://localhost:8000/ingest \
 
 ## Decisões de Arquitetura
 
-- **Local-first:** Zero dependência de cloud no config padrão. Ollama para LLM, sentence-transformers para embeddings, SQLite para dados.
-- **Roteamento por palavras-chave:** O classificador heurístico trata 95%+ das queries com zero latência. O roteamento via LLM foi descartado após benchmark — adicionava 5+ segundos sem ganho de precisão.
-- **Dual ChromaDB:** Coleções separadas para `resumes` e `job_postings` permitem busca vetorial direcionada por tipo de documento.
-- **Cross-encoder multilíngue:** `mmarco-mMiniLMv2-L12-H384-v1` treinado em dados multilíngues incluindo português brasileiro — recupera mais de textos legais em PT-BR do que modelos English-only.
-- **Sem LangChain:** Implementação direta do framework de agentes. Menor overhead, sem abstrações desnecessárias, mais fácil de debugar.
-- **LGPD nativa:** Detecção de PII (CPF, nomes, telefones), mascaramento, audit log com retenção configurável e soft-purge.
-- **Streaming SSE:** Tokens são emitidos palavra por palavra para o frontend via Server-Sent Events sem polling.
+- **Local-first:** Zero dependência de cloud na configuração padrão. Ollama para LLM, sentence-transformers para embeddings, SQLite para persistência.
+- **Roteamento por palavras-chave:** Classificador heurístico sem LLM cobre 95%+ das queries com zero latência extra. O roteamento via LLM foi descartado após benchmark — adicionava 5+ segundos sem ganho de precisão.
+- **Dual ChromaDB:** Coleções separadas `resumes` e `job_postings` permitem busca vetorial direcionada; sem ruído cruzado entre tipos de documento.
+- **Cross-encoder multilíngue:** `mmarco-mMiniLMv2-L12-H384-v1` treinado em dados multilíngues incluindo PT-BR — reranking mais preciso que modelos English-only para textos de currículos brasileiros.
+- **Sem LangChain:** Implementação direta do framework de agentes. Menor overhead, sem abstrações ocultas, mais fácil de inspecionar e debugar.
+- **LGPD nativa:** Detecção de PII (CPF, nomes, telefones), mascaramento antes de persistência, audit log com retenção configurável e soft-purge.
+- **Streaming SSE:** Tokens emitidos palavra por palavra via Server-Sent Events — sem polling, sem buffering desnecessário.
 
 ---
 
 ## Testes
 
 ```bash
-# Suite completa (149 testes)
+# Suite completa (144 testes)
 python -m pytest tests/ --ignore=tests/diagnose_rag.py -v --tb=short
 
 # Por módulo
@@ -195,14 +245,22 @@ python -m pytest tests/test_coordinator.py -v
 python -m pytest tests/test_database.py -v
 ```
 
-CI executa automaticamente em Python 3.11 e 3.13 a cada push.
+CI executa automaticamente em Python 3.11 e 3.13 a cada push para `master`.
 
 ---
 
 ## Variáveis de Ambiente
 
-```env
-ANTHROPIC_API_KEY=sk-ant-...   # opcional, para features Claude
-JWT_SECRET_KEY=seu-segredo     # alterar em produção
-LLM_PROVIDER=ollama            # ou "claude"
-```
+| Variável | Padrão | Descrição |
+|----------|--------|-----------|
+| `ANTHROPIC_API_KEY` | — | Necessário apenas para `provider=claude` |
+| `JWT_SECRET_KEY` | (dev default) | Alterar em produção |
+| `LLM_PROVIDER` | `ollama` | Provider padrão: `ollama` ou `claude` |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | URL do servidor Ollama |
+
+---
+
+## Autor
+
+Daniel Campetti — Engenheiro de Software / AI Engineer
+GitHub: [github.com/danielcampetti](https://github.com/danielcampetti)
