@@ -28,31 +28,7 @@ Pergunta do recrutador → CoordinatorAgent (roteamento por palavras-chave, zero
 Resposta → SSE streaming → frontend (vanilla JS)
 ```
 
-```
-+-------------+     +---------------------------------------------------+
-|  Frontend   |     |                   Backend                         |
-|  (HTML/JS)  | --> |  +-----------+   +----------------------------+  |
-|             | SSE |  |  FastAPI  |   |      CoordinatorAgent      |  |
-| - Login     | <-- |  | + JWT Auth| ->|     (keyword routing)      |  |
-| - Chat      |     |  +-----------+   +-------+--------+-----------+  |
-| - Dashboard |     |                          |        |         |     |
-| - Scorecard |     |                          v        v         v     |
-+-------------+     |  +-----------+ +--------+ +-----------+         |
-                    |  | Resume    | | Match  | | Pipeline  |         |
-                    |  | Agent     | | Agent  | | Agent     |         |
-                    |  +-----+-----+ +---+----+ +-----+-----+         |
-                    |        |           |            |                |
-                    |  +-----+-----+ +---+----+ +----+------+         |
-                    |  | ChromaDB  | | SQLite | | SQLite    |         |
-                    |  | (vetores) | |(scores)| | (pipeline)|         |
-                    |  +-----------+ +--------+ +-----------+         |
-                    |                                                  |
-                    |  +----------------------------------------------+|
-                    |  |            Governanca LGPD                    ||
-                    |  | PII Detector > Audit Log > Retention Manager  ||
-                    |  +----------------------------------------------+|
-                    +---------------------------------------------------+
-```
+![Arquitetura TechHire AI](docs/architecture.png)
 
 ---
 
