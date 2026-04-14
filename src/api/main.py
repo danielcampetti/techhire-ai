@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -194,11 +194,15 @@ def _score_candidate_vs_job(cand: dict, job: dict, now: str) -> None:
 def _recalculate_matches(
     new_candidate_ids: list[int] | None = None,
     new_job_ids: list[int] | None = None,
+    target_job_ids: list[int] | None = None,
 ) -> int:
     """Recalculate match scores after new data is ingested.
 
-    - new_candidate_ids: score them against ALL active job_postings
+    - new_candidate_ids: score them against active job_postings
+      (restricted to target_job_ids when provided)
     - new_job_ids: score ALL active candidates against them
+    - target_job_ids: when set, new_candidate_ids are scored only against
+      these jobs (used when resumes are uploaded for a specific posting)
     Returns total number of scores written.
     """
     now = datetime.utcnow().isoformat()
@@ -214,8 +218,12 @@ def _recalculate_matches(
 
     if new_candidate_ids:
         cands = [c for c in all_cands if c["id"] in new_candidate_ids]
+        jobs_to_score = (
+            [j for j in all_jobs if j["id"] in target_job_ids]
+            if target_job_ids else all_jobs
+        )
         for cand in cands:
-            for job in all_jobs:
+            for job in jobs_to_score:
                 _score_candidate_vs_job(cand, job, now)
                 total += 1
 
@@ -305,6 +313,7 @@ async def dashboard_ui() -> HTMLResponse:
 @app.post("/ingest", summary="Indexar currículos PDF — de data/raw/ ou upload direto")
 async def ingest(
     files: Optional[List[UploadFile]] = File(default=None),
+    job_posting_id: Optional[int] = Form(default=None),
     current_user: TokenUser = Depends(require_role("manager")),
 ) -> dict:
     """Processa PDFs e indexa seus chunks no ChromaDB.
@@ -445,6 +454,7 @@ async def ingest(
     scores_written = _recalculate_matches(
         new_candidate_ids=new_candidate_ids or None,
         new_job_ids=new_job_ids or None,
+        target_job_ids=[job_posting_id] if job_posting_id and new_candidate_ids else None,
     )
 
     return {
@@ -566,23 +576,43 @@ async def list_resumes(
 
 @app.get("/candidates", summary="Listar candidatos")
 async def list_candidates(
+    job_posting_id: Optional[int] = None,
     _: TokenUser = Depends(require_role("analyst", "manager")),
 ) -> dict:
-    """Lista candidatos com melhor score de aderência e etapa atual no pipeline."""
+    """Lista candidatos com melhor score de aderência e etapa atual no pipeline.
+
+    When job_posting_id is provided, returns only candidates matched to that
+    posting, ordered by their score for that specific job.
+    """
     init_db()
     with get_db() as conn:
-        rows = conn.execute(
-            """SELECT c.id, c.full_name, c.current_role, c.experience_years,
-                      c.skills, c.resume_filename, c.created_at,
-                      MAX(m.overall_score) AS best_score,
-                      p.stage AS pipeline_stage
-               FROM candidates c
-               LEFT JOIN matches m ON c.id = m.candidate_id
-               LEFT JOIN pipeline p ON c.id = p.candidate_id
-               WHERE c.is_active = 1
-               GROUP BY c.id
-               ORDER BY COALESCE(MAX(m.overall_score), -1) DESC"""
-        ).fetchall()
+        if job_posting_id is not None:
+            rows = conn.execute(
+                """SELECT c.id, c.full_name, c.current_role, c.experience_years,
+                          c.skills, c.resume_filename, c.created_at,
+                          m.overall_score AS best_score,
+                          p.stage AS pipeline_stage
+                   FROM matches m
+                   JOIN candidates c ON c.id = m.candidate_id
+                   LEFT JOIN pipeline p ON p.candidate_id = c.id
+                             AND p.job_posting_id = ?
+                   WHERE m.job_posting_id = ? AND c.is_active = 1
+                   ORDER BY m.overall_score DESC""",
+                (job_posting_id, job_posting_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT c.id, c.full_name, c.current_role, c.experience_years,
+                          c.skills, c.resume_filename, c.created_at,
+                          MAX(m.overall_score) AS best_score,
+                          p.stage AS pipeline_stage
+                   FROM candidates c
+                   LEFT JOIN matches m ON c.id = m.candidate_id
+                   LEFT JOIN pipeline p ON c.id = p.candidate_id
+                   WHERE c.is_active = 1
+                   GROUP BY c.id
+                   ORDER BY COALESCE(MAX(m.overall_score), -1) DESC"""
+            ).fetchall()
 
     result = []
     for r in rows:

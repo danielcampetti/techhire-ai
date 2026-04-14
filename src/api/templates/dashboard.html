@@ -166,9 +166,7 @@
             font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--text-2);
         }
 
-        /* ── Upload section ───────────────────────────────── */
-        .upload-grid{display:grid;grid-template-columns:2fr 1fr;gap:1rem;margin-bottom:2rem}
-        @media(max-width:900px){.upload-grid{grid-template-columns:1fr}}
+        /* ── Upload section (Nova Vaga) ───────────────────── */
         .upload-card{
             background:var(--card);border:1px solid var(--border);border-radius:12px;
             padding:1.4rem 1.6rem;
@@ -210,16 +208,12 @@
         .progress-bar.show{display:block}
         .progress-fill{height:100%;background:var(--gold);width:0%;transition:width .3s ease}
 
-        /* ── Data list sections ───────────────────────────── */
+        /* ── Section headers ──────────────────────────────── */
         .section-header{display:flex;align-items:baseline;gap:.8rem;margin-bottom:1rem}
         .section-header .section-title{margin-bottom:0}
         .section-count{
             font-family:'JetBrains Mono',monospace;font-size:.58rem;
             color:var(--text-2);letter-spacing:.05em;
-        }
-        .data-table-card{
-            background:var(--card);border:1px solid var(--border);border-radius:12px;
-            overflow:hidden;margin-bottom:2rem;
         }
 
         /* Stage badges */
@@ -228,6 +222,53 @@
         .stage-teste      {color:#f0b429;background:rgba(240,180,41,.15)}
         .stage-aprovado   {color:var(--green);background:rgba(110,231,183,.15)}
         .stage-rejeitado  {color:var(--red);background:rgba(252,129,129,.15)}
+
+        /* ── Job posting cards ────────────────────────────── */
+        .job-card{
+            background:var(--card);border:1px solid var(--border);border-radius:12px;
+            margin-bottom:1rem;overflow:hidden;transition:border-color .15s;
+        }
+        .job-card.expanded{border-left:3px solid var(--gold)}
+        .job-card-header{
+            display:flex;align-items:center;gap:1rem;
+            padding:1.05rem 1.4rem;cursor:pointer;user-select:none;
+            transition:background .15s;
+        }
+        .job-card-header:hover{background:rgba(201,168,76,.04)}
+        .job-toggle{
+            font-family:'JetBrains Mono',monospace;font-size:.7rem;
+            color:var(--gold);width:1rem;flex-shrink:0;
+        }
+        .job-card-title{flex:1;min-width:0}
+        .job-name{font-size:.88rem;color:var(--text)}
+        .job-company-tag{
+            font-family:'JetBrains Mono',monospace;font-size:.57rem;
+            color:var(--text-2);margin-left:.5rem;
+        }
+        .job-card-meta{
+            display:flex;align-items:center;gap:.9rem;
+            font-family:'JetBrains Mono',monospace;font-size:.6rem;
+            white-space:nowrap;flex-shrink:0;
+        }
+        .job-meta-count{color:var(--text-2)}
+        .job-meta-score{color:var(--gold);min-width:2.5rem;text-align:right}
+        .job-meta-date{color:var(--text-2);opacity:.55;font-size:.54rem}
+        .job-card-body{display:none}
+        .job-card.expanded .job-card-body{
+            display:block;
+            animation:jcFade .18s ease;
+        }
+        @keyframes jcFade{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
+        .job-card-body-inner{
+            padding:1.1rem 1.4rem 1.4rem;
+            border-top:1px solid var(--border);
+        }
+        .job-upload-zone{margin-bottom:1.3rem}
+        .job-cands-section{margin-top:1.1rem}
+        .job-cands-label{
+            font-family:'JetBrains Mono',monospace;font-size:.54rem;letter-spacing:.12em;
+            color:var(--text-2);opacity:.7;text-transform:uppercase;margin-bottom:.6rem;
+        }
     </style>
 </head>
 <body>
@@ -246,112 +287,40 @@
     <!-- Alerts -->
     <div class="alerts-bar" id="alerts-bar"></div>
 
-    <!-- Upload Section (manager only) -->
+    <!-- Nova Vaga (manager only) -->
     <div id="upload-section" style="display:none">
-        <div class="section-title">Ingestão de Documentos</div>
-        <div class="upload-grid">
-
-            <!-- Currículos -->
-            <div class="upload-card">
-                <h3>CURRÍCULOS (PDF)</h3>
-                <div class="drop-zone" id="resume-drop" onclick="document.getElementById('resume-input').click()"
-                     ondragover="onDragOver(event,'resume-drop')" ondragleave="onDragLeave('resume-drop')"
-                     ondrop="onDrop(event,'resume-input','resume-drop')">
-                    <input type="file" id="resume-input" multiple accept=".pdf"
-                           onchange="onFileChange('resume-input','resume-file-list')">
-                    <div class="drop-zone-label">
-                        <strong>📄 Arraste PDFs aqui</strong>
-                        ou clique para selecionar
-                    </div>
-                </div>
-                <div class="file-list" id="resume-file-list">Nenhum arquivo selecionado</div>
-                <div class="progress-bar" id="resume-progress"><div class="progress-fill" id="resume-progress-fill"></div></div>
-                <div class="upload-row">
-                    <button class="btn btn-gold" onclick="uploadFiles('resume')">📄 Enviar Currículos</button>
-                    <span class="upload-status" id="resume-status"></span>
+        <div class="section-title">Nova Vaga</div>
+        <div class="upload-card" style="max-width:480px;margin-bottom:2rem">
+            <h3>NOVA VAGA (PDF)</h3>
+            <div class="drop-zone" id="job-drop" onclick="document.getElementById('job-input').click()"
+                 ondragover="onDragOver(event,'job-drop')" ondragleave="onDragLeave('job-drop')"
+                 ondrop="onDrop(event,'job-input','job-drop')">
+                <input type="file" id="job-input" accept=".pdf"
+                       onchange="onFileChange('job-input','job-file-list')">
+                <div class="drop-zone-label">
+                    <strong>📋 Arraste PDF da vaga</strong>
+                    ou clique para selecionar
                 </div>
             </div>
-
-            <!-- Vaga -->
-            <div class="upload-card">
-                <h3>VAGA (PDF)</h3>
-                <div class="drop-zone" id="job-drop" onclick="document.getElementById('job-input').click()"
-                     ondragover="onDragOver(event,'job-drop')" ondragleave="onDragLeave('job-drop')"
-                     ondrop="onDrop(event,'job-input','job-drop')">
-                    <input type="file" id="job-input" accept=".pdf"
-                           onchange="onFileChange('job-input','job-file-list')">
-                    <div class="drop-zone-label">
-                        <strong>📋 Arraste PDF da vaga</strong>
-                        ou clique para selecionar
-                    </div>
-                </div>
-                <div class="file-list" id="job-file-list">Nenhum arquivo selecionado</div>
-                <div class="progress-bar" id="job-progress"><div class="progress-fill" id="job-progress-fill"></div></div>
-                <div class="upload-row">
-                    <button class="btn btn-gold" onclick="uploadFiles('job')">📋 Nova Vaga</button>
-                    <span class="upload-status" id="job-status"></span>
-                </div>
+            <div class="file-list" id="job-file-list">Nenhum arquivo selecionado</div>
+            <div class="progress-bar" id="job-progress"><div class="progress-fill" id="job-progress-fill"></div></div>
+            <div class="upload-row">
+                <button class="btn btn-gold" onclick="uploadJobPosting()">📋 Criar Vaga</button>
+                <span class="upload-status" id="job-status"></span>
             </div>
-
-        </div>
-    </div>
-
-    <!-- Candidatos Cadastrados -->
-    <div class="section-header">
-        <div class="section-title">Candidatos Cadastrados</div>
-        <span class="section-count" id="candidates-count">carregando...</span>
-    </div>
-    <div class="data-table-card">
-        <div class="empty" id="candidates-empty" style="display:none">
-            Nenhum candidato cadastrado. Faça upload de currículos acima.
-        </div>
-        <div id="candidates-table-wrap" style="overflow-x:auto">
-            <table>
-                <thead>
-                    <tr>
-                        <th>NOME</th>
-                        <th>CARGO ATUAL</th>
-                        <th>EXP.</th>
-                        <th>SKILLS</th>
-                        <th>ARQUIVO</th>
-                        <th>SCORE</th>
-                        <th>ETAPA</th>
-                        <th>DATA</th>
-                    </tr>
-                </thead>
-                <tbody id="candidates-tbody">
-                    <tr><td colspan="8"><div class="skeleton" style="height:2rem;margin:.5rem"></div></td></tr>
-                </tbody>
-            </table>
         </div>
     </div>
 
     <!-- Vagas Ativas -->
-    <div class="section-header">
+    <div class="section-header" style="margin-bottom:1rem">
         <div class="section-title">Vagas Ativas</div>
         <span class="section-count" id="jobs-count">carregando...</span>
     </div>
-    <div class="data-table-card">
-        <div class="empty" id="jobs-empty" style="display:none">
-            Nenhuma vaga cadastrada. Faça upload de um PDF de vaga acima.
-        </div>
-        <div id="jobs-table-wrap" style="overflow-x:auto">
-            <table>
-                <thead>
-                    <tr>
-                        <th>TÍTULO</th>
-                        <th>EMPRESA</th>
-                        <th>CANDIDATOS</th>
-                        <th>SCORE MÉDIO</th>
-                        <th>DATA</th>
-                    </tr>
-                </thead>
-                <tbody id="jobs-tbody">
-                    <tr><td colspan="5"><div class="skeleton" style="height:2rem;margin:.5rem"></div></td></tr>
-                </tbody>
-            </table>
-        </div>
+    <div class="empty" id="jobs-empty"
+         style="display:none;text-align:center;padding:2.5rem;font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--text-2);margin-bottom:2rem">
+        Nenhuma vaga cadastrada. Faça upload de um PDF de vaga acima.
     </div>
+    <div id="jobs-container" style="margin-bottom:2rem"></div>
 
     <!-- KPI Cards -->
     <div class="section-title">Visão Geral — Últimos 30 dias</div>
@@ -811,7 +780,6 @@ setInterval(() => {
         countdown = 60;
         loadDashboard();
         loadLog(currentPage);
-        loadCandidates();
         loadJobPostings();
     }
 }, 1000);
@@ -846,30 +814,23 @@ function onFileChange(inputId, listId) {
         files.length ? files.map(f => f.name).join(', ') : 'Nenhum arquivo selecionado';
 }
 
-async function uploadFiles(type) {
-    const inputId = type === 'resume' ? 'resume-input' : 'job-input';
-    const statusId = type === 'resume' ? 'resume-status' : 'job-status';
-    const progressId = type === 'resume' ? 'resume-progress' : 'job-progress';
-    const fillId = type === 'resume' ? 'resume-progress-fill' : 'job-progress-fill';
-    // Both types go to /ingest — classify_document() handles routing to
-    // the correct ChromaDB collection (resumes vs job_postings) automatically.
-    const endpoint = '/ingest';
-
-    const input = document.getElementById(inputId);
-    const files = input._droppedFiles || Array.from(input.files);
-    const statusEl = document.getElementById(statusId);
-    const progressBar = document.getElementById(progressId);
-    const fill = document.getElementById(fillId);
+// ── Upload: new job posting ───────────────────────────────────────────
+async function uploadJobPosting() {
+    const input     = document.getElementById('job-input');
+    const statusEl  = document.getElementById('job-status');
+    const progBar   = document.getElementById('job-progress');
+    const fill      = document.getElementById('job-progress-fill');
+    const files     = input._droppedFiles || Array.from(input.files);
 
     if (!files.length) {
         statusEl.className = 'upload-status error';
-        statusEl.textContent = 'Selecione pelo menos um PDF.';
+        statusEl.textContent = 'Selecione um PDF de vaga.';
         return;
     }
 
     statusEl.className = 'upload-status loading';
     statusEl.textContent = 'Enviando...';
-    progressBar.classList.add('show');
+    progBar.classList.add('show');
     fill.style.width = '20%';
 
     const formData = new FormData();
@@ -877,7 +838,7 @@ async function uploadFiles(type) {
 
     try {
         fill.style.width = '60%';
-        const r = await fetch(endpoint, {
+        const r = await fetch('/ingest', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + token },
             body: formData,
@@ -894,78 +855,215 @@ async function uploadFiles(type) {
 
         const data = await r.json();
         statusEl.className = 'upload-status success';
-        if (type === 'resume') {
-            statusEl.textContent =
-                `✓ ${data.chunks_indexados} chunks · ${data.curriculos_indexados ?? '?'} currículo(s) indexado(s)`;
-        } else {
-            statusEl.textContent = `✓ Vaga indexada (${data.chunks_indexados} chunks)`;
-        }
-        // Refresh tables with new data
-        loadCandidates();
-        loadJobPostings();
-        // reset
+        statusEl.textContent = `✓ Vaga criada (${data.chunks_indexados} chunks)`;
+
         input.value = '';
         input._droppedFiles = null;
-        const listId = type === 'resume' ? 'resume-file-list' : 'job-file-list';
-        document.getElementById(listId).textContent = 'Nenhum arquivo selecionado';
+        document.getElementById('job-file-list').textContent = 'Nenhum arquivo selecionado';
+
+        loadJobPostings(); // refresh cards
     } catch (e) {
         statusEl.className = 'upload-status error';
         statusEl.textContent = '✗ ' + e.message;
     } finally {
-        setTimeout(() => { progressBar.classList.remove('show'); fill.style.width = '0%'; }, 1200);
+        setTimeout(() => { progBar.classList.remove('show'); fill.style.width = '0%'; }, 1200);
     }
 }
 
-// ── Candidates & Jobs tables ──────────────────────────────────────────
+// ── Upload: resumes for a specific job ───────────────────────────────
+async function uploadResumesForJob(jobId) {
+    const input    = document.getElementById('jinput-' + jobId);
+    const statusEl = document.getElementById('jstatus-' + jobId);
+    const progBar  = document.getElementById('jprog-' + jobId);
+    const fill     = document.getElementById('jfill-' + jobId);
+    const files    = input._droppedFiles || Array.from(input.files);
+
+    if (!files.length) {
+        statusEl.className = 'upload-status error';
+        statusEl.textContent = 'Selecione pelo menos um PDF.';
+        return;
+    }
+
+    statusEl.className = 'upload-status loading';
+    statusEl.textContent = 'Enviando...';
+    progBar.classList.add('show');
+    fill.style.width = '20%';
+
+    const formData = new FormData();
+    files.forEach(f => formData.append('files', f));
+    formData.append('job_posting_id', jobId);
+
+    try {
+        fill.style.width = '60%';
+        const r = await fetch('/ingest', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token },
+            body: formData,
+        });
+        fill.style.width = '100%';
+
+        if (r.status === 401 || r.status === 403) { location.href = '/login'; return; }
+        if (!r.ok) {
+            const text = await r.text().catch(() => '');
+            let detail = 'HTTP ' + r.status;
+            try { detail = JSON.parse(text).detail || detail; } catch (_) {}
+            throw new Error(detail);
+        }
+
+        const data = await r.json();
+        statusEl.className = 'upload-status success';
+        statusEl.textContent =
+            `✓ ${data.chunks_indexados} chunks · ${data.curriculos_indexados ?? '?'} currículo(s)`;
+
+        input.value = '';
+        input._droppedFiles = null;
+        document.getElementById('jfiles-' + jobId).textContent = 'Nenhum arquivo selecionado';
+
+        // Refresh this job's candidates inline (no full re-render)
+        loadJobCandidates(jobId);
+        // Update job header counts
+        apiFetch('/job-postings').then(d => {
+            const j = (d.job_postings || []).find(x => x.id === jobId);
+            if (!j) return;
+            const sc = document.getElementById('job-score-' + jobId);
+            if (sc) sc.textContent = j.avg_score != null ? (j.avg_score * 100).toFixed(0) + '%' : '—';
+        }).catch(() => {});
+    } catch (e) {
+        statusEl.className = 'upload-status error';
+        statusEl.textContent = '✗ ' + e.message;
+    } finally {
+        setTimeout(() => { progBar.classList.remove('show'); fill.style.width = '0%'; }, 1200);
+    }
+}
+
+// ── Stage badge helper ────────────────────────────────────────────────
 function stageBadge(stage) {
     const map = {
         triagem:       ['stage-triagem',    'TRIAGEM'],
         entrevista:    ['stage-entrevista', 'ENTREVISTA'],
-        teste_tecnico: ['stage-teste',      'TESTE TÉCNICO'],
+        teste_tecnico: ['stage-teste',      'TESTE TÉC.'],
         aprovado:      ['stage-aprovado',   'APROVADO'],
         rejeitado:     ['stage-rejeitado',  'REJEITADO'],
     };
-    if (!stage) return '<span style="color:var(--text-2);font-family:\'JetBrains Mono\',monospace;font-size:.55rem">—</span>';
+    if (!stage) return '<span style="color:var(--text-2);font-family:\'JetBrains Mono\',monospace;font-size:.54rem">—</span>';
     const [cls, label] = map[stage] || ['stage-triagem', stage.toUpperCase()];
     return `<span class="badge ${cls}">${esc(label)}</span>`;
 }
 
-async function loadCandidates() {
-    try {
-        const data = await apiFetch('/candidates');
-        const candidates = data.candidates || [];
-        const n = candidates.length;
-        document.getElementById('candidates-count').textContent =
-            `${n} candidato${n !== 1 ? 's' : ''} cadastrado${n !== 1 ? 's' : ''}`;
+// ── Job card rendering ────────────────────────────────────────────────
+function renderJobCard(job) {
+    const id = job.id;
+    const avg = job.avg_score != null ? (job.avg_score * 100).toFixed(0) + '%' : '—';
+    const cnt = job.candidate_count != null ? job.candidate_count : 0;
+    const date = (job.created_at || '').substring(0, 10);
+    const company = job.company ? ` <span class="job-company-tag">— ${esc(job.company)}</span>` : '';
+    return `<div class="job-card" id="job-card-${id}">
+  <div class="job-card-header" onclick="toggleJob(${id})">
+    <span class="job-toggle" id="job-toggle-${id}">▶</span>
+    <div class="job-card-title">
+      <span class="job-name">${esc(job.title || '—')}</span>${company}
+    </div>
+    <div class="job-card-meta">
+      <span class="job-meta-count" id="job-cand-${id}">${cnt} cand.</span>
+      <span class="job-meta-score" id="job-score-${id}">${esc(avg)}</span>
+      <span class="job-meta-date">${esc(date)}</span>
+    </div>
+  </div>
+  <div class="job-card-body" id="job-body-${id}">
+    <div class="job-card-body-inner">
+      <div class="job-upload-zone">
+        <div class="drop-zone" id="jdrop-${id}"
+             onclick="document.getElementById('jinput-${id}').click()"
+             ondragover="onDragOver(event,'jdrop-${id}')"
+             ondragleave="onDragLeave('jdrop-${id}')"
+             ondrop="onDrop(event,'jinput-${id}','jdrop-${id}')">
+          <input type="file" id="jinput-${id}" multiple accept=".pdf"
+                 onchange="onFileChange('jinput-${id}','jfiles-${id}')">
+          <div class="drop-zone-label">
+            <strong>📄 Arraste currículos para esta vaga</strong>
+            ou clique para selecionar
+          </div>
+        </div>
+        <div class="file-list" id="jfiles-${id}">Nenhum arquivo selecionado</div>
+        <div class="progress-bar" id="jprog-${id}"><div class="progress-fill" id="jfill-${id}"></div></div>
+        <div style="display:flex;align-items:center;gap:.7rem;flex-wrap:wrap">
+          <button class="btn btn-gold" onclick="uploadResumesForJob(${id})">📄 Enviar Currículos para esta Vaga</button>
+          <span class="upload-status" id="jstatus-${id}"></span>
+        </div>
+      </div>
+      <div class="job-cands-section">
+        <div class="job-cands-label">Candidatos Nesta Vaga</div>
+        <div class="empty" id="jempty-${id}" style="display:none;padding:1.5rem;text-align:center;font-family:'JetBrains Mono',monospace;font-size:.65rem;color:var(--text-2)">
+          Nenhum currículo enviado para esta vaga ainda.
+        </div>
+        <div id="jtable-wrap-${id}" style="overflow-x:auto;display:none">
+          <table>
+            <thead><tr>
+              <th>NOME</th><th>SCORE</th><th>CARGO ATUAL</th><th>SKILLS</th><th>ETAPA</th>
+            </tr></thead>
+            <tbody id="jtbody-${id}"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>`;
+}
 
-        if (n === 0) {
-            document.getElementById('candidates-empty').style.display = 'block';
-            document.getElementById('candidates-table-wrap').style.display = 'none';
+// Track expanded job cards across re-renders
+const expandedJobs = new Set();
+
+function toggleJob(jobId) {
+    const card = document.getElementById('job-card-' + jobId);
+    if (!card) return;
+    if (expandedJobs.has(jobId)) {
+        expandedJobs.delete(jobId);
+        card.classList.remove('expanded');
+        document.getElementById('job-toggle-' + jobId).textContent = '▶';
+    } else {
+        expandedJobs.add(jobId);
+        card.classList.add('expanded');
+        document.getElementById('job-toggle-' + jobId).textContent = '▼';
+        loadJobCandidates(jobId);
+    }
+}
+
+async function loadJobCandidates(jobId) {
+    const tbody  = document.getElementById('jtbody-' + jobId);
+    const empty  = document.getElementById('jempty-' + jobId);
+    const wrap   = document.getElementById('jtable-wrap-' + jobId);
+    if (!tbody) return;
+
+    try {
+        const data = await apiFetch('/candidates?job_posting_id=' + jobId);
+        const candidates = data.candidates || [];
+
+        // Update header count/score
+        const countEl = document.getElementById('job-cand-' + jobId);
+        if (countEl) countEl.textContent = candidates.length + ' cand.';
+
+        if (candidates.length === 0) {
+            empty.style.display = 'block';
+            wrap.style.display  = 'none';
             return;
         }
-        document.getElementById('candidates-empty').style.display = 'none';
-        document.getElementById('candidates-table-wrap').style.display = 'block';
+        empty.style.display = 'none';
+        wrap.style.display  = 'block';
 
-        document.getElementById('candidates-tbody').innerHTML = candidates.map(c => {
-            const score = c.best_score != null ? (c.best_score * 100).toFixed(0) + '%' : '—';
-            const skills = c.skills || '';
-            const skillsTrunc = skills.length > 52 ? skills.substring(0, 52) + '…' : (skills || '—');
-            const date = (c.created_at || '').substring(0, 10);
+        tbody.innerHTML = candidates.map(c => {
+            const score  = c.best_score != null ? (c.best_score * 100).toFixed(0) + '%' : '—';
+            const skills = (c.skills || '').substring(0, 42) || '—';
             return `<tr>
-                <td style="white-space:nowrap">${esc(c.full_name || '—')}</td>
-                <td class="mono" style="font-size:.62rem">${esc(c.current_role || '—')}</td>
-                <td class="mono" style="white-space:nowrap">${c.experience_years != null ? c.experience_years + ' a' : '—'}</td>
-                <td class="trunc" title="${esc(skills)}" style="font-size:.62rem;max-width:180px">${esc(skillsTrunc)}</td>
-                <td class="mono trunc" style="font-size:.58rem;max-width:160px">${esc(c.resume_filename || '—')}</td>
-                <td class="mono" style="color:var(--gold);white-space:nowrap">${esc(score)}</td>
-                <td style="white-space:nowrap">${stageBadge(c.pipeline_stage)}</td>
-                <td class="mono" style="font-size:.58rem;white-space:nowrap">${esc(date)}</td>
+              <td style="white-space:nowrap">${esc(c.full_name || '—')}</td>
+              <td class="mono" style="color:var(--gold);white-space:nowrap">${esc(score)}</td>
+              <td class="mono" style="font-size:.62rem">${esc(c.current_role || '—')}</td>
+              <td class="trunc" title="${esc(c.skills||'')}" style="font-size:.62rem;max-width:180px">${esc(skills)}</td>
+              <td style="white-space:nowrap">${stageBadge(c.pipeline_stage)}</td>
             </tr>`;
         }).join('');
     } catch (e) {
-        console.error('loadCandidates:', e);
-        document.getElementById('candidates-tbody').innerHTML =
-            '<tr><td colspan="8" style="color:var(--red);font-size:.7rem;padding:1rem">Erro ao carregar candidatos.</td></tr>';
+        console.error('loadJobCandidates:', e);
+        tbody.innerHTML = '<tr><td colspan="5" style="color:var(--red);font-size:.7rem;padding:1rem">Erro ao carregar candidatos.</td></tr>';
     }
 }
 
@@ -977,29 +1075,30 @@ async function loadJobPostings() {
         document.getElementById('jobs-count').textContent =
             `${n} vaga${n !== 1 ? 's' : ''} ativa${n !== 1 ? 's' : ''}`;
 
+        const container = document.getElementById('jobs-container');
         if (n === 0) {
             document.getElementById('jobs-empty').style.display = 'block';
-            document.getElementById('jobs-table-wrap').style.display = 'none';
+            container.innerHTML = '';
             return;
         }
         document.getElementById('jobs-empty').style.display = 'none';
-        document.getElementById('jobs-table-wrap').style.display = 'block';
 
-        document.getElementById('jobs-tbody').innerHTML = jobs.map(j => {
-            const avg = j.avg_score != null ? (j.avg_score * 100).toFixed(0) + '%' : '—';
-            const date = (j.created_at || '').substring(0, 10);
-            return `<tr>
-                <td>${esc(j.title || '—')}</td>
-                <td class="mono" style="font-size:.62rem">${esc(j.company || '—')}</td>
-                <td class="mono">${j.candidate_count != null ? j.candidate_count : '—'}</td>
-                <td class="mono" style="color:var(--gold)">${esc(avg)}</td>
-                <td class="mono" style="font-size:.58rem">${esc(date)}</td>
-            </tr>`;
-        }).join('');
+        // On first load, expand the first job
+        if (expandedJobs.size === 0 && jobs.length > 0) expandedJobs.add(jobs[0].id);
+
+        container.innerHTML = jobs.map(j => renderJobCard(j)).join('');
+
+        // Restore expanded state and reload candidates
+        for (const jobId of expandedJobs) {
+            const card = document.getElementById('job-card-' + jobId);
+            if (card) {
+                card.classList.add('expanded');
+                document.getElementById('job-toggle-' + jobId).textContent = '▼';
+                loadJobCandidates(jobId);
+            }
+        }
     } catch (e) {
         console.error('loadJobPostings:', e);
-        document.getElementById('jobs-tbody').innerHTML =
-            '<tr><td colspan="5" style="color:var(--red);font-size:.7rem;padding:1rem">Erro ao carregar vagas.</td></tr>';
     }
 }
 
@@ -1016,7 +1115,6 @@ async function loadJobPostings() {
 // ── Init ──────────────────────────────────────────────────────────────
 loadDashboard();
 loadLog(1);
-loadCandidates();
 loadJobPostings();
 </script>
 </body>
