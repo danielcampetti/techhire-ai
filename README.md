@@ -260,6 +260,33 @@ CI executa automaticamente em Python 3.11 e 3.13 a cada push para `master`.
 
 ---
 
+## Estrutura do Projeto
+
+```
+techhire-ai/
+├── src/
+│   ├── agents/          # CoordinatorAgent, ResumeAgent, MatchAgent, PipelineAgent
+│   ├── api/
+│   │   ├── main.py      # FastAPI app, endpoints, scoring algorithm
+│   │   ├── auth.py      # JWT, bcrypt, RBAC
+│   │   ├── governance.py        # Endpoints LGPD
+│   │   ├── conversation_routes.py
+│   │   └── templates/   # login.html, index.html (chat), dashboard.html
+│   ├── database/        # setup.py (schema), seed.py (users), connection.py
+│   ├── governance/      # PII detector, audit log, retention manager
+│   ├── ingestion/       # pdf_loader, chunker, embedding, classificação
+│   ├── llm/             # LLM router, Ollama client, Claude client
+│   ├── retrieval/       # Query engine, prompt builder
+│   └── services/        # Conversation memory
+├── tests/               # 144 pytest tests
+├── scripts/start.sh     # Startup Docker
+├── Dockerfile
+├── docker-compose.yml
+└── CLAUDE.md
+```
+
+---
+
 ## Autor
 
 Daniel Campetti — Engenheiro de Software / AI Engineer
