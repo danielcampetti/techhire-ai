@@ -269,9 +269,115 @@
             font-family:'JetBrains Mono',monospace;font-size:.54rem;letter-spacing:.12em;
             color:var(--text-2);opacity:.7;text-transform:uppercase;margin-bottom:.6rem;
         }
+
+        /* ── Score button (clickable score in candidate table) ──────────── */
+        .score-btn{
+            background:none;border:none;padding:0;cursor:pointer;
+            font-family:'JetBrains Mono',monospace;font-size:inherit;
+            color:var(--gold);text-decoration:none;transition:text-decoration .1s;
+        }
+        .score-btn:hover{text-decoration:underline;color:#d4b55c}
+
+        /* ── Scorecard Modal ─────────────────────────────────────────────── */
+        .scorecard-overlay{
+            position:fixed;inset:0;background:rgba(0,0,0,.72);
+            z-index:1000;display:flex;align-items:center;justify-content:center;
+            backdrop-filter:blur(4px);
+        }
+        .scorecard-card{
+            background:#1a1a2e;border:1px solid rgba(200,168,75,.2);border-radius:12px;
+            width:90%;max-width:640px;max-height:85vh;overflow-y:auto;
+            padding:28px 32px;
+            animation:scIn .2s ease both;
+        }
+        @keyframes scIn{
+            from{opacity:0;transform:scale(.95) translateY(8px)}
+            to  {opacity:1;transform:scale(1)  translateY(0)}
+        }
+        .scorecard-header{display:flex;align-items:center;gap:12px;margin-bottom:24px;flex-wrap:wrap}
+        .scorecard-header h2{
+            font-family:'DM Serif Display',serif;font-size:1.25rem;color:#e8e0cc;flex:1;min-width:0;
+        }
+        .sc-job-badge{
+            font-family:'JetBrains Mono',monospace;font-size:.6rem;color:#c9a84c;
+            border:1px solid rgba(200,168,75,.3);padding:3px 8px;border-radius:4px;white-space:nowrap;
+        }
+        .scorecard-close{
+            background:transparent;border:none;color:#666;font-size:1.2rem;cursor:pointer;
+            padding:0 4px;line-height:1;
+        }
+        .scorecard-close:hover{color:#e8e0cc}
+        .sc-overall{text-align:center;margin-bottom:28px}
+        .sc-overall-label{
+            font-family:'JetBrains Mono',monospace;font-size:.6rem;color:#666;
+            letter-spacing:.15em;margin-bottom:4px;text-transform:uppercase;
+        }
+        .sc-overall-value{font-family:'DM Serif Display',serif;font-size:2.5rem;color:#c9a84c}
+        .sc-overall-bar{height:6px;background:#2a2a3e;border-radius:3px;margin-top:8px}
+        .sc-overall-fill{
+            height:100%;background:linear-gradient(90deg,#c9a84c,#d4b55c);
+            border-radius:3px;transition:width .6s ease;
+        }
+        .sc-component{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+        .sc-comp-label{
+            font-family:'JetBrains Mono',monospace;font-size:.65rem;color:#9a9080;
+            width:100px;text-align:right;letter-spacing:.05em;flex-shrink:0;
+        }
+        .sc-comp-bar-bg{flex:1;height:8px;background:#2a2a3e;border-radius:4px;overflow:hidden}
+        .sc-comp-bar-fill{height:100%;border-radius:4px;transition:width .6s ease}
+        .sc-comp-value{
+            font-family:'JetBrains Mono',monospace;font-size:.7rem;color:#e8e0cc;
+            width:38px;text-align:right;flex-shrink:0;
+        }
+        .sc-comp-weight{
+            font-family:'JetBrains Mono',monospace;font-size:.55rem;color:#555;
+            width:30px;text-align:right;flex-shrink:0;
+        }
+        .sc-skills-title{
+            font-family:'JetBrains Mono',monospace;font-size:.6rem;color:#666;
+            letter-spacing:.12em;margin:20px 0 8px;text-transform:uppercase;
+        }
+        .sc-skills-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+        .sc-chip{
+            font-family:'JetBrains Mono',monospace;font-size:.6rem;
+            padding:3px 10px;border-radius:12px;letter-spacing:.03em;
+        }
+        .sc-chip-match{background:rgba(72,187,120,.15);color:#48bb78;border:1px solid rgba(72,187,120,.3)}
+        .sc-chip-missing{background:rgba(252,129,129,.15);color:#fc8181;border:1px solid rgba(252,129,129,.3)}
+        .sc-chip-extra{background:rgba(200,200,200,.1);color:#777;border:1px solid rgba(200,200,200,.15)}
+        .sc-detail-row{
+            display:flex;justify-content:space-between;padding:8px 0;
+            border-bottom:1px solid #2a2a3e;font-size:.8rem;gap:12px;
+        }
+        .sc-detail-label{color:#9a9080;flex-shrink:0}
+        .sc-detail-value{color:#e8e0cc;text-align:right;word-break:break-word}
+        @media(max-width:480px){
+            .scorecard-card{padding:20px 18px;max-height:90vh}
+            .sc-comp-label{width:72px;font-size:.58rem}
+            .sc-overall-value{font-size:2rem}
+        }
     </style>
 </head>
 <body>
+
+<!-- ── Scorecard Modal ──────────────────────────────────────────────────── -->
+<div id="scorecard-modal" class="scorecard-overlay" style="display:none">
+  <div class="scorecard-card">
+    <div class="scorecard-header">
+      <h2 id="sc-candidate-name"></h2>
+      <span id="sc-job-title" class="sc-job-badge"></span>
+      <button class="scorecard-close" onclick="closeScorecard()" aria-label="Fechar">✕</button>
+    </div>
+    <div class="sc-overall">
+      <div class="sc-overall-label">Score Geral</div>
+      <div class="sc-overall-value" id="sc-overall"></div>
+      <div class="sc-overall-bar"><div class="sc-overall-fill" id="sc-overall-fill"></div></div>
+    </div>
+    <div id="sc-components"></div>
+    <div id="sc-skills-section"></div>
+    <div id="sc-details-section"></div>
+  </div>
+</div>
 
 <div class="topbar">
     <div>
@@ -802,9 +908,11 @@ function onDrop(e, inputId, zoneId) {
     if (!fileArr.length) return;
     // Store on element directly (input.files is read-only)
     input._droppedFiles = fileArr;
-    const listId = inputId === 'resume-input' ? 'resume-file-list' : 'job-file-list';
-    document.getElementById(listId).textContent =
-        fileArr.map(f => f.name).join(', ');
+    const listId = inputId.startsWith('jinput-')
+        ? inputId.replace('jinput-', 'jfiles-')
+        : inputId.replace('-input', '-file-list');
+    const listEl = document.getElementById(listId);
+    if (listEl) listEl.textContent = fileArr.map(f => f.name).join(', ');
 }
 function onFileChange(inputId, listId) {
     const input = document.getElementById(inputId);
@@ -1051,11 +1159,14 @@ async function loadJobCandidates(jobId) {
         wrap.style.display  = 'block';
 
         tbody.innerHTML = candidates.map(c => {
-            const score  = c.best_score != null ? (c.best_score * 100).toFixed(0) + '%' : '—';
+            const scorePct = c.best_score != null ? (c.best_score * 100).toFixed(0) + '%' : null;
+            const scoreCell = scorePct
+                ? `<button class="score-btn" onclick="openScorecard(${c.id},${jobId})" title="Ver breakdown do score">${scorePct}</button>`
+                : '—';
             const skills = (c.skills || '').substring(0, 42) || '—';
             return `<tr>
               <td style="white-space:nowrap">${esc(c.full_name || '—')}</td>
-              <td class="mono" style="color:var(--gold);white-space:nowrap">${esc(score)}</td>
+              <td class="mono" style="color:var(--gold);white-space:nowrap">${scoreCell}</td>
               <td class="mono" style="font-size:.62rem">${esc(c.current_role || '—')}</td>
               <td class="trunc" title="${esc(c.skills||'')}" style="font-size:.62rem;max-width:180px">${esc(skills)}</td>
               <td style="white-space:nowrap">${stageBadge(c.pipeline_stage)}</td>
@@ -1101,6 +1212,120 @@ async function loadJobPostings() {
         console.error('loadJobPostings:', e);
     }
 }
+
+// ── Scorecard Modal ───────────────────────────────────────────────────
+async function openScorecard(candidateId, jobId) {
+    const token = localStorage.getItem('jwt_token');
+    try {
+        const res = await fetch(`/matches/${candidateId}/${jobId}/details`, {
+            headers: {'Authorization': 'Bearer ' + token}
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        renderScorecard(data);
+        document.getElementById('scorecard-modal').style.display = 'flex';
+    } catch (e) {
+        console.error('Scorecard error:', e);
+    }
+}
+
+function closeScorecard() {
+    document.getElementById('scorecard-modal').style.display = 'none';
+}
+
+function renderScorecard(data) {
+    document.getElementById('sc-candidate-name').textContent = data.candidate.full_name;
+    document.getElementById('sc-job-title').textContent = data.job_posting.title;
+
+    const pct = (data.overall_score * 100).toFixed(1);
+    document.getElementById('sc-overall').textContent = pct + '%';
+    document.getElementById('sc-overall-fill').style.width = pct + '%';
+
+    // Component bars
+    const comps = document.getElementById('sc-components');
+    comps.innerHTML = '';
+    const labels = {skills: 'SKILLS', experience: 'EXPERIÊNCIA', education: 'FORMAÇÃO', bonus: 'BÔNUS'};
+    for (const [key, comp] of Object.entries(data.components)) {
+        const score = (comp.score * 100).toFixed(0);
+        const weight = (comp.weight * 100).toFixed(0);
+        const color = comp.score >= 0.7 ? '#48bb78' : comp.score >= 0.4 ? '#f0b429' : '#fc8181';
+        comps.innerHTML += `
+            <div class="sc-component">
+                <span class="sc-comp-label">${labels[key] || key}</span>
+                <div class="sc-comp-bar-bg">
+                    <div class="sc-comp-bar-fill" style="width:${score}%;background:${color}"></div>
+                </div>
+                <span class="sc-comp-value">${score}%</span>
+                <span class="sc-comp-weight">(${weight}%)</span>
+            </div>`;
+    }
+
+    // Skills chips
+    const ss = document.getElementById('sc-skills-section');
+    ss.innerHTML = '';
+    const sd = data.components.skills?.details;
+    if (sd) {
+        if (sd.matched_skills?.length) {
+            ss.innerHTML += `<div class="sc-skills-title">✅ Skills Encontradas (${sd.matched_skills.length})</div>`;
+            ss.innerHTML += `<div class="sc-skills-chips">${sd.matched_skills.map(s => `<span class="sc-chip sc-chip-match">${s}</span>`).join('')}</div>`;
+        }
+        if (sd.missing_skills?.length) {
+            ss.innerHTML += `<div class="sc-skills-title">❌ Skills Requeridas Não Encontradas (${sd.missing_skills.length})</div>`;
+            ss.innerHTML += `<div class="sc-skills-chips">${sd.missing_skills.map(s => `<span class="sc-chip sc-chip-missing">${s}</span>`).join('')}</div>`;
+        }
+        if (sd.extra_candidate_skills?.length) {
+            ss.innerHTML += `<div class="sc-skills-title">➕ Skills Adicionais do Candidato (${sd.extra_candidate_skills.length})</div>`;
+            ss.innerHTML += `<div class="sc-skills-chips">${sd.extra_candidate_skills.map(s => `<span class="sc-chip sc-chip-extra">${s}</span>`).join('')}</div>`;
+        }
+    }
+
+    // Details section
+    const ds = document.getElementById('sc-details-section');
+    ds.innerHTML = '';
+    const exp = data.components.experience?.details;
+    if (exp) {
+        ds.innerHTML += `<div class="sc-skills-title">📋 Detalhes</div>
+            <div class="sc-detail-row">
+                <span class="sc-detail-label">Experiência do candidato</span>
+                <span class="sc-detail-value">${exp.candidate_years} anos</span>
+            </div>
+            <div class="sc-detail-row">
+                <span class="sc-detail-label">Experiência requerida</span>
+                <span class="sc-detail-value">${exp.required_years} anos</span>
+            </div>`;
+    }
+    const edu = data.components.education?.details;
+    if (edu) {
+        ds.innerHTML += `<div class="sc-detail-row">
+                <span class="sc-detail-label">Formação detectada</span>
+                <span class="sc-detail-value">${esc(edu.explanation || edu.detected_level || '—')}</span>
+            </div>`;
+    }
+    const bonus = data.components.bonus?.details;
+    if (bonus) {
+        ds.innerHTML += `<div class="sc-detail-row">
+                <span class="sc-detail-label">Liderança</span>
+                <span class="sc-detail-value">${bonus.leadership_detected
+                    ? '✅ ' + esc((bonus.leadership_keywords || []).join(', '))
+                    : '❌ Não detectada'}</span>
+            </div>
+            <div class="sc-detail-row">
+                <span class="sc-detail-label">Escala / Produção</span>
+                <span class="sc-detail-value">${bonus.scale_detected
+                    ? '✅ ' + esc((bonus.scale_keywords || []).join(', '))
+                    : '❌ Não detectada'}</span>
+            </div>`;
+    }
+}
+
+// Close on overlay click
+document.getElementById('scorecard-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeScorecard();
+});
+// Close on Escape
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeScorecard();
+});
 
 // ── Show upload section for managers ─────────────────────────────────
 (async function checkRole() {
