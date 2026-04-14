@@ -16,6 +16,7 @@ Endpoints:
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union
@@ -50,6 +51,139 @@ from src.api.diagnostic import router as diagnostic_router
 from src.api.evaluate import router as evaluate_router
 from src.api.conversation_routes import conversation_router
 from src.api.governance import governance_router
+
+# ── Skill extraction helpers ────────────────────────────────────────────────
+
+_COMMON_SKILLS = [
+    "python", "java", "javascript", "typescript", "go", "rust", "c++", "c#",
+    "sql", "nosql", "mongodb", "postgresql", "mysql", "redis", "kafka",
+    "docker", "kubernetes", "aws", "gcp", "azure", "terraform",
+    "fastapi", "django", "flask", "spring", "react", "angular", "vue",
+    "machine learning", "deep learning", "nlp", "rag", "llm", "langchain",
+    "pytorch", "tensorflow", "scikit-learn", "pandas", "numpy",
+    "git", "api", "rest", "graphql", "microservices", "linux",
+]
+
+
+def _extract_candidate_data(filename: str, full_text: str) -> dict:
+    """Parse candidate metadata from filename and raw PDF text."""
+    name = filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").title()
+    lower = full_text.lower()
+    skills = [s for s in _COMMON_SKILLS if s in lower]
+    m = re.search(r"(\d+)\+?\s*anos?\s+de\s+experi", lower)
+    exp_years = int(m.group(1)) if m else 0
+    return {
+        "full_name": name,
+        "resume_filename": filename,
+        "resume_text": full_text[:10_000],
+        "skills": json.dumps(skills),
+        "experience_years": exp_years,
+    }
+
+
+def _extract_job_data(filename: str, full_text: str) -> dict:
+    """Parse job posting metadata from filename and raw PDF text."""
+    title = filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").title()
+    return {
+        "title": title,
+        "description": full_text[:5_000],
+        "requirements": full_text[:2_000],
+    }
+
+
+def _score_candidate_vs_job(cand: dict, job: dict, now: str) -> None:
+    """Calculate and upsert a match score row for one candidate×job pair."""
+    required_skills = set(
+        s.strip().lower()
+        for s in (job["requirements"] or "").replace(",", " ").split()
+        if len(s.strip()) > 2
+    )
+    try:
+        cand_skills = set(s.lower() for s in json.loads(cand["skills"] or "[]"))
+    except Exception:
+        cand_skills = set()
+
+    skills_score = (
+        len(cand_skills & required_skills) / len(required_skills)
+        if required_skills else 0.5
+    )
+
+    req_exp = 3
+    em = re.search(r"(\d+)\+?\s*anos", job["requirements"] or "", re.IGNORECASE)
+    if em:
+        req_exp = int(em.group(1))
+    experience_score = min((cand["experience_years"] or 0) / max(req_exp, 1), 1.0)
+
+    edu = (cand["education"] or "").lower()
+    education_score = 1.0 if ("doutorado" in edu or "phd" in edu) else \
+                      0.9 if ("mestrado" in edu or "mba" in edu) else \
+                      0.75 if ("bacharelado" in edu or "graduação" in edu or "graduacao" in edu) else 0.7
+
+    overall = round(0.5 * skills_score + 0.3 * experience_score + 0.2 * education_score, 4)
+
+    with get_db() as conn:
+        existing = conn.execute(
+            "SELECT id FROM matches WHERE candidate_id=? AND job_posting_id=?",
+            (cand["id"], job["id"]),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """UPDATE matches SET overall_score=?, skills_score=?,
+                   experience_score=?, education_score=?, created_at=?
+                   WHERE candidate_id=? AND job_posting_id=?""",
+                (overall, skills_score, experience_score, education_score,
+                 now, cand["id"], job["id"]),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO matches
+                   (candidate_id, job_posting_id, overall_score, skills_score,
+                    experience_score, education_score, created_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (cand["id"], job["id"], overall, skills_score,
+                 experience_score, education_score, now),
+            )
+
+
+def _recalculate_matches(
+    new_candidate_ids: list[int] | None = None,
+    new_job_ids: list[int] | None = None,
+) -> int:
+    """Recalculate match scores after new data is ingested.
+
+    - new_candidate_ids: score them against ALL active job_postings
+    - new_job_ids: score ALL active candidates against them
+    Returns total number of scores written.
+    """
+    now = datetime.utcnow().isoformat()
+    total = 0
+
+    with get_db() as conn:
+        all_jobs = [dict(r) for r in conn.execute(
+            "SELECT * FROM job_postings WHERE is_active=1"
+        ).fetchall()]
+        all_cands = [dict(r) for r in conn.execute(
+            "SELECT * FROM candidates WHERE is_active=1"
+        ).fetchall()]
+
+    if new_candidate_ids:
+        cands = [c for c in all_cands if c["id"] in new_candidate_ids]
+        for cand in cands:
+            for job in all_jobs:
+                _score_candidate_vs_job(cand, job, now)
+                total += 1
+
+    if new_job_ids:
+        jobs = [j for j in all_jobs if j["id"] in new_job_ids]
+        for job in jobs:
+            for cand in all_cands:
+                _score_candidate_vs_job(cand, job, now)
+                total += 1
+
+    return total
+
+
+# ── FastAPI app ──────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="TechHire AI API",
@@ -125,7 +259,7 @@ async def dashboard_ui() -> HTMLResponse:
 @app.post("/ingest", summary="Indexar currículos PDF — de data/raw/ ou upload direto")
 async def ingest(
     files: Optional[List[UploadFile]] = File(default=None),
-    _: TokenUser = Depends(require_role("manager")),
+    current_user: TokenUser = Depends(require_role("manager")),
 ) -> dict:
     """Processa PDFs e indexa seus chunks no ChromaDB.
 
@@ -181,7 +315,10 @@ async def ingest(
             "vagas_indexadas": 0,
         }
 
-    # ── Classify and index each document ─────────────────────────────
+    # ── Classify, index to ChromaDB, and upsert to SQLite ────────────
+    init_db()
+    now = datetime.utcnow().isoformat()
+
     pages_by_file: dict[str, list] = defaultdict(list)
     for page in pages:
         pages_by_file[page.filename].append(page)
@@ -189,21 +326,80 @@ async def ingest(
     total_chunks = 0
     resume_files = 0
     job_files = 0
+    new_candidate_ids: list[int] = []
+    new_job_ids: list[int] = []
 
     for filename, file_pages in pages_by_file.items():
         full_text = " ".join(p.content for p in file_pages)
         doc_type = classify_document(full_text)
 
         if doc_type == "resume":
+            # ── ChromaDB ──────────────────────────────────────────────
             chunks = chunk_pages(file_pages, document_type="resume")
-            collection = settings.collection_name  # "resumes"
+            total_chunks += index_chunks(chunks, collection_name=settings.collection_name)
             resume_files += 1
+
+            # ── SQLite candidates ─────────────────────────────────────
+            cdata = _extract_candidate_data(filename, full_text)
+            with get_db() as conn:
+                existing = conn.execute(
+                    "SELECT id FROM candidates WHERE resume_filename=?", (filename,)
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        """UPDATE candidates SET resume_text=?, skills=?,
+                           experience_years=? WHERE id=?""",
+                        (cdata["resume_text"], cdata["skills"],
+                         cdata["experience_years"], existing["id"]),
+                    )
+                    new_candidate_ids.append(existing["id"])
+                else:
+                    conn.execute(
+                        """INSERT INTO candidates
+                           (full_name, resume_filename, resume_text, skills,
+                            experience_years, created_at, is_active)
+                           VALUES (?,?,?,?,?,?,1)""",
+                        (cdata["full_name"], cdata["resume_filename"],
+                         cdata["resume_text"], cdata["skills"],
+                         cdata["experience_years"], now),
+                    )
+                    cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    new_candidate_ids.append(cid)
+
         else:
+            # ── ChromaDB ──────────────────────────────────────────────
             chunks = chunk_pages(file_pages, document_type="job_posting")
-            collection = settings.jobs_collection_name  # "job_postings"
+            total_chunks += index_chunks(chunks, collection_name=settings.jobs_collection_name)
             job_files += 1
 
-        total_chunks += index_chunks(chunks, collection_name=collection)
+            # ── SQLite job_postings ───────────────────────────────────
+            jdata = _extract_job_data(filename, full_text)
+            with get_db() as conn:
+                existing = conn.execute(
+                    "SELECT id FROM job_postings WHERE title=?", (jdata["title"],)
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        "UPDATE job_postings SET description=?, requirements=? WHERE id=?",
+                        (jdata["description"], jdata["requirements"], existing["id"]),
+                    )
+                    new_job_ids.append(existing["id"])
+                else:
+                    conn.execute(
+                        """INSERT INTO job_postings
+                           (title, description, requirements, created_by, created_at, is_active)
+                           VALUES (?,?,?,?,?,1)""",
+                        (jdata["title"], jdata["description"], jdata["requirements"],
+                         current_user.user_id, now),
+                    )
+                    jid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    new_job_ids.append(jid)
+
+    # ── Auto-calculate match scores for new data ──────────────────────
+    scores_written = _recalculate_matches(
+        new_candidate_ids=new_candidate_ids or None,
+        new_job_ids=new_job_ids or None,
+    )
 
     return {
         "mensagem": "Indexação concluída com sucesso.",
@@ -211,6 +407,7 @@ async def ingest(
         "chunks_indexados": total_chunks,
         "curriculos_indexados": resume_files,
         "vagas_indexadas": job_files,
+        "scores_calculados": scores_written,
     }
 
 

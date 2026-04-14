@@ -60,12 +60,17 @@ Você é um analista de recrutamento e seleção. Gere uma query SQL para o banc
 
 {schema}
 
+{db_context}
+
 Regras OBRIGATÓRIAS:
 1. Gere APENAS queries SELECT (nunca DELETE, UPDATE, INSERT, DROP, CREATE).
 2. Use aspas simples para strings.
 3. Para datas, o formato é 'YYYY-MM-DD'.
 4. Responda APENAS com a query SQL, sem nenhuma explicação, sem markdown, sem ```sql.
-5. Para rankear candidatos, use ORDER BY overall_score DESC.
+5. Para rankear candidatos, use ORDER BY m.overall_score DESC.
+6. Para filtrar por título de vaga, use LIKE com % (ex: WHERE jp.title LIKE '%IA%'), nunca igualdade exata.
+7. Quando a pergunta mencionar uma vaga específica, use o ID da vaga se disponível no contexto acima.
+8. Sempre faça JOIN com candidates (c) e job_postings (jp) ao consultar matches (m).
 
 Pergunta: {question}
 SQL:"""
@@ -117,8 +122,27 @@ class MatchAgent:
         """
         init_db()
 
+        # Inject live DB context so the LLM knows which job IDs/titles exist
+        with get_db() as conn:
+            jobs = conn.execute(
+                "SELECT id, title FROM job_postings WHERE is_active=1"
+            ).fetchall()
+            cand_count = conn.execute(
+                "SELECT COUNT(*) FROM candidates WHERE is_active=1"
+            ).fetchone()[0]
+            match_count = conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
+
+        job_lines = "\n".join(f"  ID {r['id']}: {r['title']}" for r in jobs) or "  (nenhuma vaga cadastrada)"
+        db_context = (
+            f"Estado atual do banco:\n"
+            f"- Candidatos ativos: {cand_count}\n"
+            f"- Vagas disponíveis:\n{job_lines}\n"
+            f"- Scores de aderência calculados: {match_count}"
+        )
+
         sql_prompt = _SQL_GENERATION_PROMPT.format(
             schema=_SCHEMA,
+            db_context=db_context,
             question=question + ("\n\nContexto adicional:\n" + extra_context if extra_context else ""),
         )
         raw_sql = await llm_router.generate(sql_prompt, provider=provider)
