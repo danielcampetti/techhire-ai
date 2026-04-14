@@ -165,6 +165,50 @@
             text-align:center;padding:3rem;
             font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--text-2);
         }
+
+        /* ── Upload section ───────────────────────────────── */
+        .upload-grid{display:grid;grid-template-columns:2fr 1fr;gap:1rem;margin-bottom:2rem}
+        @media(max-width:900px){.upload-grid{grid-template-columns:1fr}}
+        .upload-card{
+            background:var(--card);border:1px solid var(--border);border-radius:12px;
+            padding:1.4rem 1.6rem;
+        }
+        .upload-card h3{
+            font-family:'JetBrains Mono',monospace;font-size:.62rem;color:var(--text-2);
+            letter-spacing:.08em;margin-bottom:1rem;
+        }
+        .drop-zone{
+            border:1.5px dashed var(--gold-dim);border-radius:8px;
+            padding:1.6rem 1rem;text-align:center;cursor:pointer;
+            transition:border-color .2s,background .2s;margin-bottom:.9rem;
+        }
+        .drop-zone:hover,.drop-zone.drag-over{
+            border-color:var(--gold);background:rgba(201,168,76,.05);
+        }
+        .drop-zone input[type=file]{display:none}
+        .drop-zone-label{
+            font-family:'JetBrains Mono',monospace;font-size:.65rem;
+            color:var(--text-2);pointer-events:none;
+        }
+        .drop-zone-label strong{color:var(--gold);display:block;margin-bottom:.3rem;font-size:.75rem}
+        .file-list{
+            font-family:'JetBrains Mono',monospace;font-size:.6rem;
+            color:var(--text-2);margin-bottom:.8rem;min-height:1.2rem;
+        }
+        .upload-row{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap}
+        .upload-status{
+            font-family:'JetBrains Mono',monospace;font-size:.62rem;
+            flex:1;min-width:0;
+        }
+        .upload-status.success{color:var(--green)}
+        .upload-status.error{color:var(--red)}
+        .upload-status.loading{color:var(--gold);animation:sk 1.2s ease-in-out infinite}
+        .progress-bar{
+            height:3px;background:rgba(201,168,76,.15);border-radius:2px;
+            overflow:hidden;margin-bottom:.8rem;display:none;
+        }
+        .progress-bar.show{display:block}
+        .progress-fill{height:100%;background:var(--gold);width:0%;transition:width .3s ease}
     </style>
 </head>
 <body>
@@ -182,6 +226,56 @@
 <div class="main">
     <!-- Alerts -->
     <div class="alerts-bar" id="alerts-bar"></div>
+
+    <!-- Upload Section (manager only) -->
+    <div id="upload-section" style="display:none">
+        <div class="section-title">Ingestão de Documentos</div>
+        <div class="upload-grid">
+
+            <!-- Currículos -->
+            <div class="upload-card">
+                <h3>CURRÍCULOS (PDF)</h3>
+                <div class="drop-zone" id="resume-drop" onclick="document.getElementById('resume-input').click()"
+                     ondragover="onDragOver(event,'resume-drop')" ondragleave="onDragLeave('resume-drop')"
+                     ondrop="onDrop(event,'resume-input','resume-drop')">
+                    <input type="file" id="resume-input" multiple accept=".pdf"
+                           onchange="onFileChange('resume-input','resume-file-list')">
+                    <div class="drop-zone-label">
+                        <strong>📄 Arraste PDFs aqui</strong>
+                        ou clique para selecionar
+                    </div>
+                </div>
+                <div class="file-list" id="resume-file-list">Nenhum arquivo selecionado</div>
+                <div class="progress-bar" id="resume-progress"><div class="progress-fill" id="resume-progress-fill"></div></div>
+                <div class="upload-row">
+                    <button class="btn btn-gold" onclick="uploadFiles('resume')">📄 Enviar Currículos</button>
+                    <span class="upload-status" id="resume-status"></span>
+                </div>
+            </div>
+
+            <!-- Vaga -->
+            <div class="upload-card">
+                <h3>VAGA (PDF)</h3>
+                <div class="drop-zone" id="job-drop" onclick="document.getElementById('job-input').click()"
+                     ondragover="onDragOver(event,'job-drop')" ondragleave="onDragLeave('job-drop')"
+                     ondrop="onDrop(event,'job-input','job-drop')">
+                    <input type="file" id="job-input" accept=".pdf"
+                           onchange="onFileChange('job-input','job-file-list')">
+                    <div class="drop-zone-label">
+                        <strong>📋 Arraste PDF da vaga</strong>
+                        ou clique para selecionar
+                    </div>
+                </div>
+                <div class="file-list" id="job-file-list">Nenhum arquivo selecionado</div>
+                <div class="progress-bar" id="job-progress"><div class="progress-fill" id="job-progress-fill"></div></div>
+                <div class="upload-row">
+                    <button class="btn btn-gold" onclick="uploadFiles('job')">📋 Nova Vaga</button>
+                    <span class="upload-status" id="job-status"></span>
+                </div>
+            </div>
+
+        </div>
+    </div>
 
     <!-- KPI Cards -->
     <div class="section-title">Visão Geral — Últimos 30 dias</div>
@@ -491,11 +585,11 @@ function buildAgentChart(data) {
 // ── Data loading ──────────────────────────────────────────────────────
 async function loadDashboard() {
     try {
-        const [dash, daily, alertsData] = await Promise.all([
+        const [dash, daily] = await Promise.all([
             apiFetch('/governance/dashboard'),
             apiFetch('/governance/daily-stats'),
-            apiFetch('/alerts?status=open'),
         ]);
+        const alertsData = { total: 0 };
 
         const m = dash.metricas;
         const r = dash.retencao;
@@ -643,6 +737,109 @@ setInterval(() => {
         loadLog(currentPage);
     }
 }, 1000);
+
+// ── Upload section ────────────────────────────────────────────────────
+function onDragOver(e, zoneId) {
+    e.preventDefault();
+    document.getElementById(zoneId).classList.add('drag-over');
+}
+function onDragLeave(zoneId) {
+    document.getElementById(zoneId).classList.remove('drag-over');
+}
+function onDrop(e, inputId, zoneId) {
+    e.preventDefault();
+    document.getElementById(zoneId).classList.remove('drag-over');
+    const input = document.getElementById(inputId);
+    const dt = e.dataTransfer;
+    // Assign dropped files to the hidden input via a DataTransfer trick
+    const fileArr = Array.from(dt.files).filter(f => f.name.endsWith('.pdf'));
+    if (!fileArr.length) return;
+    // Store on element directly (input.files is read-only)
+    input._droppedFiles = fileArr;
+    const listId = inputId === 'resume-input' ? 'resume-file-list' : 'job-file-list';
+    document.getElementById(listId).textContent =
+        fileArr.map(f => f.name).join(', ');
+}
+function onFileChange(inputId, listId) {
+    const input = document.getElementById(inputId);
+    input._droppedFiles = null;
+    const files = Array.from(input.files);
+    document.getElementById(listId).textContent =
+        files.length ? files.map(f => f.name).join(', ') : 'Nenhum arquivo selecionado';
+}
+
+async function uploadFiles(type) {
+    const inputId = type === 'resume' ? 'resume-input' : 'job-input';
+    const statusId = type === 'resume' ? 'resume-status' : 'job-status';
+    const progressId = type === 'resume' ? 'resume-progress' : 'job-progress';
+    const fillId = type === 'resume' ? 'resume-progress-fill' : 'job-progress-fill';
+    const endpoint = type === 'resume' ? '/ingest' : '/ingest/job';
+
+    const input = document.getElementById(inputId);
+    const files = input._droppedFiles || Array.from(input.files);
+    const statusEl = document.getElementById(statusId);
+    const progressBar = document.getElementById(progressId);
+    const fill = document.getElementById(fillId);
+
+    if (!files.length) {
+        statusEl.className = 'upload-status error';
+        statusEl.textContent = 'Selecione pelo menos um PDF.';
+        return;
+    }
+
+    statusEl.className = 'upload-status loading';
+    statusEl.textContent = 'Enviando...';
+    progressBar.classList.add('show');
+    fill.style.width = '20%';
+
+    const formData = new FormData();
+    files.forEach(f => formData.append('files', f));
+
+    try {
+        fill.style.width = '60%';
+        const r = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token },
+            body: formData,
+        });
+        fill.style.width = '100%';
+
+        if (r.status === 401 || r.status === 403) { location.href = '/login'; return; }
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({ detail: 'Erro desconhecido' }));
+            throw new Error(err.detail || 'HTTP ' + r.status);
+        }
+
+        const data = await r.json();
+        statusEl.className = 'upload-status success';
+        if (type === 'resume') {
+            statusEl.textContent =
+                `✓ ${data.chunks_indexados} chunks · ${data.curriculos_indexados ?? '?'} currículo(s) indexado(s)`;
+        } else {
+            statusEl.textContent = `✓ Vaga indexada (${data.chunks_indexados} chunks)`;
+        }
+        // reset
+        input.value = '';
+        input._droppedFiles = null;
+        const listId = type === 'resume' ? 'resume-file-list' : 'job-file-list';
+        document.getElementById(listId).textContent = 'Nenhum arquivo selecionado';
+    } catch (e) {
+        statusEl.className = 'upload-status error';
+        statusEl.textContent = '✗ ' + e.message;
+    } finally {
+        setTimeout(() => { progressBar.classList.remove('show'); fill.style.width = '0%'; }, 1200);
+    }
+}
+
+// ── Show upload section for managers ─────────────────────────────────
+(async function checkRole() {
+    try {
+        const me = await apiFetch('/auth/me');
+        if (me.role === 'manager') {
+            document.getElementById('upload-section').style.display = 'block';
+        }
+    } catch (_) {}
+})();
 
 // ── Init ──────────────────────────────────────────────────────────────
 loadDashboard();

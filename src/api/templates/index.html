@@ -747,8 +747,8 @@
     <div id="messages">
         <div id="welcome">
             <div class="welcome-glyph">👥</div>
-            <h2>Consultoria Regulatória</h2>
-            <p>Analise currículos, compare candidatos e gerencie seu pipeline de contratação.</p>
+            <h2>Recrutamento Inteligente</h2>
+            <p>Analise currículos, compare candidatos e gerencie seu pipeline de contratação com IA.</p>
             <div class="chips">
                 <button class="chip" onclick="useChip(this)">Quais candidatos têm experiência com Python?</button>
                 <button class="chip" onclick="useChip(this)">Rankeie os top 5 para a vaga de IA</button>
@@ -1087,13 +1087,13 @@
             w.id = 'welcome';
             w.innerHTML = `
                 <div class="welcome-glyph">👥</div>
-                <h2>Consultoria Regulatória</h2>
-                <p>Faça perguntas sobre regulamentação do Banco Central, CVM e CMN. As respostas são fundamentadas exclusivamente nos documentos indexados.</p>
+                <h2>Recrutamento Inteligente</h2>
+                <p>Analise currículos, compare candidatos e gerencie seu pipeline de contratação com IA.</p>
                 <div class="chips">
-                    <button class="chip" onclick="useChip(this)">O que diz a Circular 3.978?</button>
-                    <button class="chip" onclick="useChip(this)">Quais as obrigações de PLD/FT?</button>
-                    <button class="chip" onclick="useChip(this)">Quantas transações não foram reportadas ao COAF?</button>
-                    <button class="chip" onclick="useChip(this)">Gere um relatório de alertas abertos</button>
+                    <button class="chip" onclick="useChip(this)">Quais candidatos têm experiência com Python?</button>
+                    <button class="chip" onclick="useChip(this)">Rankeie os top 5 para a vaga de IA</button>
+                    <button class="chip" onclick="useChip(this)">Qual o status do funil de contratação?</button>
+                    <button class="chip" onclick="useChip(this)">Compare os candidatos João e Maria</button>
                 </div>`;
             msgs.appendChild(w);
             await loadConversations();
@@ -1196,7 +1196,7 @@
         if (pii_detected) {
             const piiDiv = document.createElement('div');
             piiDiv.className = 'pii-notice';
-            piiDiv.textContent = '🔒 Esta resposta contém dados pessoais protegidos pela LGPD. Uso restrito a fins de compliance.';
+            piiDiv.textContent = '🔒 Esta resposta contém dados pessoais protegidos pela LGPD. Uso restrito a fins de recrutamento autorizado.';
             body.appendChild(piiDiv);
         }
         scrollDown();

@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -122,9 +122,16 @@ async def dashboard_ui() -> HTMLResponse:
     return HTMLResponse(_DASHBOARD_PATH.read_text(encoding="utf-8"))
 
 
-@app.post("/ingest", summary="Indexar currículos PDF de data/raw/")
-async def ingest(_: TokenUser = Depends(require_role("manager"))) -> dict:
-    """Processa todos os PDFs em data/raw/ e indexa seus chunks no ChromaDB.
+@app.post("/ingest", summary="Indexar currículos PDF — de data/raw/ ou upload direto")
+async def ingest(
+    files: Optional[List[UploadFile]] = File(default=None),
+    _: TokenUser = Depends(require_role("manager")),
+) -> dict:
+    """Processa PDFs e indexa seus chunks no ChromaDB.
+
+    Dois modos:
+    - Sem arquivos: lê todos os PDFs de data/raw/
+    - Com arquivos (multipart): processa os PDFs enviados diretamente
 
     Classifica automaticamente cada PDF como currículo ou vaga e usa a
     coleção correta (resumes vs job_postings).
@@ -132,23 +139,49 @@ async def ingest(_: TokenUser = Depends(require_role("manager"))) -> dict:
     Returns:
         Dict com contagem de páginas processadas e chunks indexados.
     """
-    raw_dir = Path(settings.data_raw_dir)
-    if not raw_dir.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f"Diretório '{raw_dir}' não encontrado. Crie-o e adicione PDFs.",
-        )
+    from collections import defaultdict
+    from src.ingestion.pdf_loader import DocumentPage
 
-    pages = load_all_pdfs(raw_dir)
+    # ── Gather pages from upload OR from data/raw/ ────────────────────
+    pages: list = []
+
+    if files:
+        import fitz  # PyMuPDF
+        for upload in files:
+            if not upload.filename or not upload.filename.lower().endswith(".pdf"):
+                continue
+            raw_bytes = await upload.read()
+            doc = fitz.open(stream=raw_bytes, filetype="pdf")
+            for i, page in enumerate(doc):
+                text = page.get_text()
+                if text.strip():
+                    pages.append(DocumentPage(
+                        content=text,
+                        filename=upload.filename,
+                        page_number=i + 1,
+                        title=upload.filename.rsplit(".", 1)[0].replace("_", " ").title(),
+                        metadata={"source": upload.filename, "page": i + 1},
+                    ))
+            doc.close()
+    else:
+        raw_dir = Path(settings.data_raw_dir)
+        if not raw_dir.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Diretório '{raw_dir}' não encontrado. Crie-o e adicione PDFs.",
+            )
+        pages = load_all_pdfs(raw_dir)
+
     if not pages:
         return {
-            "mensagem": "Nenhum PDF encontrado em data/raw/",
+            "mensagem": "Nenhum PDF com conteúdo encontrado.",
             "paginas_processadas": 0,
             "chunks_indexados": 0,
+            "curriculos_indexados": 0,
+            "vagas_indexadas": 0,
         }
 
-    # Group pages by filename and classify each document
-    from collections import defaultdict
+    # ── Classify and index each document ─────────────────────────────
     pages_by_file: dict[str, list] = defaultdict(list)
     for page in pages:
         pages_by_file[page.filename].append(page)
