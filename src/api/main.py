@@ -66,6 +66,26 @@ _COMMON_SKILLS = [
 
 
 _PDF_NAME_PREFIX = re.compile(r"^(curriculo|curriculum|cv|resume|lattes)[_\-\s]?", re.IGNORECASE)
+_JOB_FILENAME_RE = re.compile(r"^(vaga|job|position|cargo|oferta)[_\-\s.]", re.IGNORECASE)
+# Header phrases that look name-like but aren't names
+_NAME_BLACKLIST = re.compile(
+    r"^(curriculum vitae|curriculo|resume|cv|linkedin|e.?mail|telefone|phone|"
+    r"github|portfolio|objective|summary|perfil|sobre mim|habilidades|experienc)",
+    re.IGNORECASE,
+)
+
+
+def _classify_doc(filename: str, full_text: str) -> str:
+    """Classify a document as resume or job_posting.
+
+    Uses the filename as the primary signal (reliable) and falls back to
+    content-based keyword counting only when the filename is ambiguous.
+    """
+    if _PDF_NAME_PREFIX.match(filename):
+        return "resume"
+    if _JOB_FILENAME_RE.match(filename):
+        return "job_posting"
+    return classify_document(full_text)
 
 
 def _extract_candidate_data(filename: str, full_text: str) -> dict:
@@ -75,15 +95,21 @@ def _extract_candidate_data(filename: str, full_text: str) -> dict:
     stem = _PDF_NAME_PREFIX.sub("", stem)
     name = stem.replace("_", " ").replace("-", " ").title().strip() or filename
 
-    # Try to use the first non-empty line of the PDF if it looks like a proper name
+    # Scan first 10 non-empty lines for a proper-name line
+    checked = 0
     for line in full_text.split("\n"):
         line = line.strip()
         if not line:
             continue
+        checked += 1
+        if checked > 10:
+            break
         words = line.split()
-        if 2 <= len(words) <= 5 and re.match(r"^[A-Za-zÀ-ÿ\s]+$", line):
+        if (2 <= len(words) <= 5
+                and re.match(r"^[A-Za-zÀ-ÿ\s]+$", line)
+                and not _NAME_BLACKLIST.match(line)):
             name = line.title()
-        break  # only check the very first non-empty line
+            break
 
     lower = full_text.lower()
     skills = [s for s in _COMMON_SKILLS if s in lower]
@@ -351,7 +377,7 @@ async def ingest(
 
     for filename, file_pages in pages_by_file.items():
         full_text = " ".join(p.content for p in file_pages)
-        doc_type = classify_document(full_text)
+        doc_type = _classify_doc(filename, full_text)
 
         if doc_type == "resume":
             # ── ChromaDB ──────────────────────────────────────────────
@@ -540,62 +566,55 @@ async def list_resumes(
 
 @app.get("/candidates", summary="Listar candidatos")
 async def list_candidates(
-    score_min: Optional[float] = None,
-    score_max: Optional[float] = None,
-    job_posting_id: Optional[int] = None,
-    stage: Optional[str] = None,
     _: TokenUser = Depends(require_role("analyst", "manager")),
 ) -> dict:
-    """Lista candidatos com filtros opcionais de score e etapa do pipeline."""
+    """Lista candidatos com melhor score de aderência e etapa atual no pipeline."""
     init_db()
-    conditions: list[str] = []
-    params: list = []
-    join = ""
-
-    if job_posting_id is not None or score_min is not None or score_max is not None:
-        join = "LEFT JOIN matches m ON c.id = m.candidate_id"
-        if job_posting_id is not None:
-            conditions.append("m.job_posting_id = ?")
-            params.append(job_posting_id)
-        if score_min is not None:
-            conditions.append("m.overall_score >= ?")
-            params.append(score_min)
-        if score_max is not None:
-            conditions.append("m.overall_score <= ?")
-            params.append(score_max)
-
-    if stage is not None:
-        if not join:
-            join = "LEFT JOIN pipeline p ON c.id = p.candidate_id"
-        else:
-            join += " LEFT JOIN pipeline p ON c.id = p.candidate_id"
-        conditions.append("p.stage = ?")
-        params.append(stage)
-
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    order = "ORDER BY m.overall_score DESC" if join and "matches" in join else "ORDER BY c.created_at DESC"
-
     with get_db() as conn:
         rows = conn.execute(
-            f"SELECT c.* {', m.overall_score, m.skills_score, m.analysis' if 'matches' in join else ''} "
-            f"FROM candidates c {join} {where} {order}",
-            params,
+            """SELECT c.id, c.full_name, c.current_role, c.experience_years,
+                      c.skills, c.resume_filename, c.created_at,
+                      MAX(m.overall_score) AS best_score,
+                      p.stage AS pipeline_stage
+               FROM candidates c
+               LEFT JOIN matches m ON c.id = m.candidate_id
+               LEFT JOIN pipeline p ON c.id = p.candidate_id
+               WHERE c.is_active = 1
+               GROUP BY c.id
+               ORDER BY COALESCE(MAX(m.overall_score), -1) DESC"""
         ).fetchall()
 
-    return {"candidatos": [dict(r) for r in rows], "total": len(rows)}
+    result = []
+    for r in rows:
+        d = dict(r)
+        try:
+            skills_list = json.loads(d.get("skills") or "[]")
+            d["skills"] = ", ".join(skills_list)
+        except Exception:
+            pass
+        result.append(d)
+
+    return {"candidates": result, "total": len(result)}
 
 
 @app.get("/job-postings", summary="Listar vagas")
 async def list_job_postings(
     _: TokenUser = Depends(require_role("analyst", "manager")),
 ) -> dict:
-    """Lista todas as vagas ativas."""
+    """Lista vagas ativas com contagem de candidatos e score médio."""
     init_db()
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT * FROM job_postings WHERE is_active = 1 ORDER BY created_at DESC"
+            """SELECT jp.id, jp.title, jp.company, jp.created_at,
+                      COUNT(DISTINCT m.candidate_id) AS candidate_count,
+                      ROUND(AVG(m.overall_score), 3) AS avg_score
+               FROM job_postings jp
+               LEFT JOIN matches m ON jp.id = m.job_posting_id
+               WHERE jp.is_active = 1
+               GROUP BY jp.id
+               ORDER BY jp.created_at DESC"""
         ).fetchall()
-    return {"vagas": [dict(r) for r in rows], "total": len(rows)}
+    return {"job_postings": [dict(r) for r in rows], "total": len(rows)}
 
 
 @app.get("/matches/{job_id}", summary="Candidatos rankeados para uma vaga")

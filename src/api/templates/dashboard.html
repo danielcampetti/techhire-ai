@@ -209,6 +209,25 @@
         }
         .progress-bar.show{display:block}
         .progress-fill{height:100%;background:var(--gold);width:0%;transition:width .3s ease}
+
+        /* ── Data list sections ───────────────────────────── */
+        .section-header{display:flex;align-items:baseline;gap:.8rem;margin-bottom:1rem}
+        .section-header .section-title{margin-bottom:0}
+        .section-count{
+            font-family:'JetBrains Mono',monospace;font-size:.58rem;
+            color:var(--text-2);letter-spacing:.05em;
+        }
+        .data-table-card{
+            background:var(--card);border:1px solid var(--border);border-radius:12px;
+            overflow:hidden;margin-bottom:2rem;
+        }
+
+        /* Stage badges */
+        .stage-triagem    {color:#9a9080;background:rgba(154,144,128,.15)}
+        .stage-entrevista {color:var(--blue);background:rgba(147,197,253,.15)}
+        .stage-teste      {color:#f0b429;background:rgba(240,180,41,.15)}
+        .stage-aprovado   {color:var(--green);background:rgba(110,231,183,.15)}
+        .stage-rejeitado  {color:var(--red);background:rgba(252,129,129,.15)}
     </style>
 </head>
 <body>
@@ -274,6 +293,63 @@
                 </div>
             </div>
 
+        </div>
+    </div>
+
+    <!-- Candidatos Cadastrados -->
+    <div class="section-header">
+        <div class="section-title">Candidatos Cadastrados</div>
+        <span class="section-count" id="candidates-count">carregando...</span>
+    </div>
+    <div class="data-table-card">
+        <div class="empty" id="candidates-empty" style="display:none">
+            Nenhum candidato cadastrado. Faça upload de currículos acima.
+        </div>
+        <div id="candidates-table-wrap" style="overflow-x:auto">
+            <table>
+                <thead>
+                    <tr>
+                        <th>NOME</th>
+                        <th>CARGO ATUAL</th>
+                        <th>EXP.</th>
+                        <th>SKILLS</th>
+                        <th>ARQUIVO</th>
+                        <th>SCORE</th>
+                        <th>ETAPA</th>
+                        <th>DATA</th>
+                    </tr>
+                </thead>
+                <tbody id="candidates-tbody">
+                    <tr><td colspan="8"><div class="skeleton" style="height:2rem;margin:.5rem"></div></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Vagas Ativas -->
+    <div class="section-header">
+        <div class="section-title">Vagas Ativas</div>
+        <span class="section-count" id="jobs-count">carregando...</span>
+    </div>
+    <div class="data-table-card">
+        <div class="empty" id="jobs-empty" style="display:none">
+            Nenhuma vaga cadastrada. Faça upload de um PDF de vaga acima.
+        </div>
+        <div id="jobs-table-wrap" style="overflow-x:auto">
+            <table>
+                <thead>
+                    <tr>
+                        <th>TÍTULO</th>
+                        <th>EMPRESA</th>
+                        <th>CANDIDATOS</th>
+                        <th>SCORE MÉDIO</th>
+                        <th>DATA</th>
+                    </tr>
+                </thead>
+                <tbody id="jobs-tbody">
+                    <tr><td colspan="5"><div class="skeleton" style="height:2rem;margin:.5rem"></div></td></tr>
+                </tbody>
+            </table>
         </div>
     </div>
 
@@ -735,6 +811,8 @@ setInterval(() => {
         countdown = 60;
         loadDashboard();
         loadLog(currentPage);
+        loadCandidates();
+        loadJobPostings();
     }
 }, 1000);
 
@@ -822,6 +900,9 @@ async function uploadFiles(type) {
         } else {
             statusEl.textContent = `✓ Vaga indexada (${data.chunks_indexados} chunks)`;
         }
+        // Refresh tables with new data
+        loadCandidates();
+        loadJobPostings();
         // reset
         input.value = '';
         input._droppedFiles = null;
@@ -832,6 +913,93 @@ async function uploadFiles(type) {
         statusEl.textContent = '✗ ' + e.message;
     } finally {
         setTimeout(() => { progressBar.classList.remove('show'); fill.style.width = '0%'; }, 1200);
+    }
+}
+
+// ── Candidates & Jobs tables ──────────────────────────────────────────
+function stageBadge(stage) {
+    const map = {
+        triagem:       ['stage-triagem',    'TRIAGEM'],
+        entrevista:    ['stage-entrevista', 'ENTREVISTA'],
+        teste_tecnico: ['stage-teste',      'TESTE TÉCNICO'],
+        aprovado:      ['stage-aprovado',   'APROVADO'],
+        rejeitado:     ['stage-rejeitado',  'REJEITADO'],
+    };
+    if (!stage) return '<span style="color:var(--text-2);font-family:\'JetBrains Mono\',monospace;font-size:.55rem">—</span>';
+    const [cls, label] = map[stage] || ['stage-triagem', stage.toUpperCase()];
+    return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+
+async function loadCandidates() {
+    try {
+        const data = await apiFetch('/candidates');
+        const candidates = data.candidates || [];
+        const n = candidates.length;
+        document.getElementById('candidates-count').textContent =
+            `${n} candidato${n !== 1 ? 's' : ''} cadastrado${n !== 1 ? 's' : ''}`;
+
+        if (n === 0) {
+            document.getElementById('candidates-empty').style.display = 'block';
+            document.getElementById('candidates-table-wrap').style.display = 'none';
+            return;
+        }
+        document.getElementById('candidates-empty').style.display = 'none';
+        document.getElementById('candidates-table-wrap').style.display = 'block';
+
+        document.getElementById('candidates-tbody').innerHTML = candidates.map(c => {
+            const score = c.best_score != null ? (c.best_score * 100).toFixed(0) + '%' : '—';
+            const skills = c.skills || '';
+            const skillsTrunc = skills.length > 52 ? skills.substring(0, 52) + '…' : (skills || '—');
+            const date = (c.created_at || '').substring(0, 10);
+            return `<tr>
+                <td style="white-space:nowrap">${esc(c.full_name || '—')}</td>
+                <td class="mono" style="font-size:.62rem">${esc(c.current_role || '—')}</td>
+                <td class="mono" style="white-space:nowrap">${c.experience_years != null ? c.experience_years + ' a' : '—'}</td>
+                <td class="trunc" title="${esc(skills)}" style="font-size:.62rem;max-width:180px">${esc(skillsTrunc)}</td>
+                <td class="mono trunc" style="font-size:.58rem;max-width:160px">${esc(c.resume_filename || '—')}</td>
+                <td class="mono" style="color:var(--gold);white-space:nowrap">${esc(score)}</td>
+                <td style="white-space:nowrap">${stageBadge(c.pipeline_stage)}</td>
+                <td class="mono" style="font-size:.58rem;white-space:nowrap">${esc(date)}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        console.error('loadCandidates:', e);
+        document.getElementById('candidates-tbody').innerHTML =
+            '<tr><td colspan="8" style="color:var(--red);font-size:.7rem;padding:1rem">Erro ao carregar candidatos.</td></tr>';
+    }
+}
+
+async function loadJobPostings() {
+    try {
+        const data = await apiFetch('/job-postings');
+        const jobs = data.job_postings || [];
+        const n = jobs.length;
+        document.getElementById('jobs-count').textContent =
+            `${n} vaga${n !== 1 ? 's' : ''} ativa${n !== 1 ? 's' : ''}`;
+
+        if (n === 0) {
+            document.getElementById('jobs-empty').style.display = 'block';
+            document.getElementById('jobs-table-wrap').style.display = 'none';
+            return;
+        }
+        document.getElementById('jobs-empty').style.display = 'none';
+        document.getElementById('jobs-table-wrap').style.display = 'block';
+
+        document.getElementById('jobs-tbody').innerHTML = jobs.map(j => {
+            const avg = j.avg_score != null ? (j.avg_score * 100).toFixed(0) + '%' : '—';
+            const date = (j.created_at || '').substring(0, 10);
+            return `<tr>
+                <td>${esc(j.title || '—')}</td>
+                <td class="mono" style="font-size:.62rem">${esc(j.company || '—')}</td>
+                <td class="mono">${j.candidate_count != null ? j.candidate_count : '—'}</td>
+                <td class="mono" style="color:var(--gold)">${esc(avg)}</td>
+                <td class="mono" style="font-size:.58rem">${esc(date)}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        console.error('loadJobPostings:', e);
+        document.getElementById('jobs-tbody').innerHTML =
+            '<tr><td colspan="5" style="color:var(--red);font-size:.7rem;padding:1rem">Erro ao carregar vagas.</td></tr>';
     }
 }
 
@@ -848,6 +1016,8 @@ async function uploadFiles(type) {
 // ── Init ──────────────────────────────────────────────────────────────
 loadDashboard();
 loadLog(1);
+loadCandidates();
+loadJobPostings();
 </script>
 </body>
 </html>
