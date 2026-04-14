@@ -1179,7 +1179,7 @@ async function loadJobCandidates(jobId) {
                 ? `<button class="score-btn" onclick="openScorecard(${c.id},${jobId})" title="Ver breakdown do score">${scorePct}</button>`
                 : '—';
             const dlBtn = c.resume_filename
-                ? `<button class="cv-dl-icon" onclick="downloadResume(${c.id},${JSON.stringify(c.resume_filename)})" title="Baixar currículo PDF">📄</button>`
+                ? `<button class="cv-dl-icon" onclick='downloadResume(${c.id},${JSON.stringify(c.resume_filename)})' title="Baixar currículo PDF">📄</button>`
                 : '';
             const skills = (c.skills || '').substring(0, 42) || '—';
             return `<tr>
