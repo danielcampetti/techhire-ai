@@ -530,6 +530,10 @@ async def ingest(
     # ── Gather pages from upload OR from data/raw/ ────────────────────
     pages: list = []
 
+    # raw_bytes_by_file: stash uploaded bytes so the SQLite upsert can
+    # save the original PDF for later download (keyed by filename).
+    raw_bytes_by_file: dict[str, bytes] = {}
+
     if files:
         import fitz  # PyMuPDF
         raw_dir = Path(settings.data_raw_dir)
@@ -538,7 +542,8 @@ async def ingest(
             if not upload.filename or not upload.filename.lower().endswith(".pdf"):
                 continue
             raw_bytes = await upload.read()
-            # Persist so download endpoint can serve the file later
+            raw_bytes_by_file[upload.filename] = raw_bytes
+            # Also persist to filesystem as a convenience cache
             (raw_dir / upload.filename).write_bytes(raw_bytes)
             doc = fitz.open(stream=raw_bytes, filetype="pdf")
             for i, page in enumerate(doc):
@@ -596,6 +601,7 @@ async def ingest(
 
             # ── SQLite candidates ─────────────────────────────────────
             cdata = _extract_candidate_data(filename, full_text)
+            pdf_bytes = raw_bytes_by_file.get(filename)  # None for batch-from-disk uploads
             with get_db() as conn:
                 existing = conn.execute(
                     "SELECT id FROM candidates WHERE resume_filename=?", (filename,)
@@ -603,20 +609,21 @@ async def ingest(
                 if existing:
                     conn.execute(
                         """UPDATE candidates SET resume_text=?, skills=?,
-                           experience_years=? WHERE id=?""",
+                           experience_years=?, resume_pdf=COALESCE(?,resume_pdf)
+                           WHERE id=?""",
                         (cdata["resume_text"], cdata["skills"],
-                         cdata["experience_years"], existing["id"]),
+                         cdata["experience_years"], pdf_bytes, existing["id"]),
                     )
                     new_candidate_ids.append(existing["id"])
                 else:
                     conn.execute(
                         """INSERT INTO candidates
                            (full_name, resume_filename, resume_text, skills,
-                            experience_years, created_at, is_active)
-                           VALUES (?,?,?,?,?,?,1)""",
+                            experience_years, resume_pdf, created_at, is_active)
+                           VALUES (?,?,?,?,?,?,?,1)""",
                         (cdata["full_name"], cdata["resume_filename"],
                          cdata["resume_text"], cdata["skills"],
-                         cdata["experience_years"], now),
+                         cdata["experience_years"], pdf_bytes, now),
                     )
                     cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                     new_candidate_ids.append(cid)
@@ -791,25 +798,40 @@ async def download_resume(
     init_db()
     with get_db() as conn:
         cand = conn.execute(
-            "SELECT resume_filename FROM candidates WHERE id = ? AND is_active = 1",
+            "SELECT resume_filename, resume_pdf FROM candidates WHERE id = ? AND is_active = 1",
             (candidate_id,),
         ).fetchone()
     if not cand:
         raise HTTPException(status_code=404, detail=f"Candidato #{candidate_id} não encontrado.")
 
     filename = cand["resume_filename"]
-    pdf_path = Path(settings.data_raw_dir) / filename
-    if not pdf_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f"Arquivo '{filename}' não encontrado no servidor. Faça o upload novamente.",
+    disposition = f'attachment; filename="{filename}"'
+
+    # Primary: serve from the BLOB stored in the DB (always available after upload)
+    if cand["resume_pdf"]:
+        from fastapi.responses import Response as _Resp
+        return _Resp(
+            content=bytes(cand["resume_pdf"]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": disposition},
         )
 
-    return FileResponse(
-        path=str(pdf_path),
-        filename=filename,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    # Fallback: serve from data/raw/ (available when batch-ingest was used)
+    pdf_path = Path(settings.data_raw_dir) / filename
+    if pdf_path.exists():
+        return FileResponse(
+            path=str(pdf_path),
+            filename=filename,
+            media_type="application/pdf",
+            headers={"Content-Disposition": disposition},
+        )
+
+    raise HTTPException(
+        status_code=404,
+        detail=(
+            f"PDF de '{filename}' não disponível para download. "
+            "Faça o upload do arquivo novamente para habilitar o download."
+        ),
     )
 
 

@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS candidates (
     skills           TEXT,
     resume_filename  TEXT    NOT NULL,
     resume_text      TEXT,
+    resume_pdf       BLOB,
     created_at       TEXT    NOT NULL,
     is_active        BOOLEAN DEFAULT TRUE
 );
@@ -149,6 +150,13 @@ def create_tables() -> None:
             s = statement.strip()
             if s:
                 conn.execute(s)
+        # Migrate: add resume_pdf column to existing databases that predate it
+        existing_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(candidates)").fetchall()
+        }
+        if "resume_pdf" not in existing_cols:
+            conn.execute("ALTER TABLE candidates ADD COLUMN resume_pdf BLOB")
 
 
 if __name__ == "__main__":

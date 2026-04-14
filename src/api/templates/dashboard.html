@@ -1233,12 +1233,18 @@ async function loadJobPostings() {
 
 // ── CV Download ───────────────────────────────────────────────────────
 async function downloadResume(candidateId, filename) {
+    if (!candidateId) { console.warn('downloadResume: no candidateId'); return; }
     const token = localStorage.getItem('jwt_token');
     try {
         const res = await fetch(`/resumes/${candidateId}/download`, {
             headers: {'Authorization': 'Bearer ' + token}
         });
-        if (!res.ok) { console.error('Download failed:', res.status); return; }
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            const msg = body.detail || `Erro ${res.status} ao baixar currículo.`;
+            showToast(msg, 'error');
+            return;
+        }
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -1250,7 +1256,23 @@ async function downloadResume(candidateId, filename) {
         URL.revokeObjectURL(url);
     } catch (e) {
         console.error('downloadResume:', e);
+        showToast('Erro de rede ao baixar currículo.', 'error');
     }
+}
+
+function showToast(msg, type) {
+    const t = document.createElement('div');
+    t.textContent = msg;
+    Object.assign(t.style, {
+        position:'fixed', bottom:'24px', right:'24px', zIndex:'2000',
+        background: type === 'error' ? '#7f1d1d' : '#14532d',
+        color:'#fecaca', fontFamily:"'JetBrains Mono',monospace",
+        fontSize:'.7rem', padding:'10px 16px', borderRadius:'6px',
+        maxWidth:'320px', boxShadow:'0 4px 12px rgba(0,0,0,.5)',
+        transition:'opacity .3s',
+    });
+    document.body.appendChild(t);
+    setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 3500);
 }
 
 // ── Scorecard Modal ───────────────────────────────────────────────────
