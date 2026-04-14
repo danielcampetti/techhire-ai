@@ -278,6 +278,20 @@
         }
         .score-btn:hover{text-decoration:underline;color:#d4b55c}
 
+        /* ── CV download button ──────────────────────────────────────────── */
+        .cv-dl-btn{
+            background:none;border:1px solid rgba(200,168,75,.35);border-radius:4px;
+            padding:2px 8px;cursor:pointer;font-family:'JetBrains Mono',monospace;
+            font-size:.6rem;color:var(--gold);line-height:1.6;
+            transition:border-color .15s,color .15s;white-space:nowrap;
+        }
+        .cv-dl-btn:hover{border-color:var(--gold);color:#d4b55c}
+        .cv-dl-icon{
+            background:none;border:none;padding:0 3px;cursor:pointer;
+            font-size:.8rem;opacity:.6;transition:opacity .15s;line-height:1;
+        }
+        .cv-dl-icon:hover{opacity:1}
+
         /* ── Scorecard Modal ─────────────────────────────────────────────── */
         .scorecard-overlay{
             position:fixed;inset:0;background:rgba(0,0,0,.72);
@@ -366,6 +380,7 @@
     <div class="scorecard-header">
       <h2 id="sc-candidate-name"></h2>
       <span id="sc-job-title" class="sc-job-badge"></span>
+      <button id="sc-dl-btn" class="cv-dl-btn" onclick="downloadResume(window._scCandidateId,window._scFilename)">📄 Baixar Currículo</button>
       <button class="scorecard-close" onclick="closeScorecard()" aria-label="Fechar">✕</button>
     </div>
     <div class="sc-overall">
@@ -1163,9 +1178,12 @@ async function loadJobCandidates(jobId) {
             const scoreCell = scorePct
                 ? `<button class="score-btn" onclick="openScorecard(${c.id},${jobId})" title="Ver breakdown do score">${scorePct}</button>`
                 : '—';
+            const dlBtn = c.resume_filename
+                ? `<button class="cv-dl-icon" onclick="downloadResume(${c.id},${JSON.stringify(c.resume_filename)})" title="Baixar currículo PDF">📄</button>`
+                : '';
             const skills = (c.skills || '').substring(0, 42) || '—';
             return `<tr>
-              <td style="white-space:nowrap">${esc(c.full_name || '—')}</td>
+              <td style="white-space:nowrap">${esc(c.full_name || '—')} ${dlBtn}</td>
               <td class="mono" style="color:var(--gold);white-space:nowrap">${scoreCell}</td>
               <td class="mono" style="font-size:.62rem">${esc(c.current_role || '—')}</td>
               <td class="trunc" title="${esc(c.skills||'')}" style="font-size:.62rem;max-width:180px">${esc(skills)}</td>
@@ -1213,6 +1231,28 @@ async function loadJobPostings() {
     }
 }
 
+// ── CV Download ───────────────────────────────────────────────────────
+async function downloadResume(candidateId, filename) {
+    const token = localStorage.getItem('jwt_token');
+    try {
+        const res = await fetch(`/resumes/${candidateId}/download`, {
+            headers: {'Authorization': 'Bearer ' + token}
+        });
+        if (!res.ok) { console.error('Download failed:', res.status); return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || 'curriculo.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        console.error('downloadResume:', e);
+    }
+}
+
 // ── Scorecard Modal ───────────────────────────────────────────────────
 async function openScorecard(candidateId, jobId) {
     const token = localStorage.getItem('jwt_token');
@@ -1234,8 +1274,16 @@ function closeScorecard() {
 }
 
 function renderScorecard(data) {
+    // Stash for the header download button
+    window._scCandidateId = data.candidate.id;
+    window._scFilename    = data.candidate.resume_filename;
+
     document.getElementById('sc-candidate-name').textContent = data.candidate.full_name;
     document.getElementById('sc-job-title').textContent = data.job_posting.title;
+
+    // Show/hide download button depending on whether a filename is known
+    const dlBtn = document.getElementById('sc-dl-btn');
+    if (dlBtn) dlBtn.style.display = data.candidate.resume_filename ? '' : 'none';
 
     const pct = (data.overall_score * 100).toFixed(1);
     document.getElementById('sc-overall').textContent = pct + '%';

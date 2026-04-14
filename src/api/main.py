@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 _TEMPLATE_PATH  = Path(__file__).parent / "templates" / "index.html"
@@ -532,10 +532,14 @@ async def ingest(
 
     if files:
         import fitz  # PyMuPDF
+        raw_dir = Path(settings.data_raw_dir)
+        raw_dir.mkdir(parents=True, exist_ok=True)
         for upload in files:
             if not upload.filename or not upload.filename.lower().endswith(".pdf"):
                 continue
             raw_bytes = await upload.read()
+            # Persist so download endpoint can serve the file later
+            (raw_dir / upload.filename).write_bytes(raw_bytes)
             doc = fitz.open(stream=raw_bytes, filetype="pdf")
             for i, page in enumerate(doc):
                 text = page.get_text()
@@ -767,6 +771,46 @@ async def list_resumes(
     client = _get_chroma_client()
     docs = list_indexed_documents(client, collection_name=settings.collection_name)
     return {"curriculos": docs, "total": len(docs)}
+
+
+@app.get("/resumes/{candidate_id}/download", summary="Baixar currículo PDF original")
+async def download_resume(
+    candidate_id: int,
+    _: TokenUser = Depends(require_role("analyst", "manager")),
+) -> FileResponse:
+    """Retorna o PDF original do currículo para download.
+
+    O arquivo é servido de data/raw/ onde é salvo automaticamente no upload.
+
+    Returns:
+        FileResponse com Content-Disposition: attachment.
+
+    Raises:
+        404 if the candidate doesn't exist or the file was not found on disk.
+    """
+    init_db()
+    with get_db() as conn:
+        cand = conn.execute(
+            "SELECT resume_filename FROM candidates WHERE id = ? AND is_active = 1",
+            (candidate_id,),
+        ).fetchone()
+    if not cand:
+        raise HTTPException(status_code=404, detail=f"Candidato #{candidate_id} não encontrado.")
+
+    filename = cand["resume_filename"]
+    pdf_path = Path(settings.data_raw_dir) / filename
+    if not pdf_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Arquivo '{filename}' não encontrado no servidor. Faça o upload novamente.",
+        )
+
+    return FileResponse(
+        path=str(pdf_path),
+        filename=filename,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/candidates", summary="Listar candidatos")
