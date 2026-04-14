@@ -23,7 +23,7 @@ TechHire AI is a multi-agent RAG-based platform for intelligent resume screening
 | Frontend | Vanilla HTML/JS/CSS (no React framework) |
 | HTTP client | httpx (async) |
 | Containerization | Docker + Docker Compose |
-| CI/CD | GitHub Actions (Python 3.11 + 3.13, 149 tests) |
+| CI/CD | GitHub Actions (Python 3.11 + 3.13, 144 tests) |
 
 ## Architecture
 
@@ -57,18 +57,15 @@ Recruiter question → CoordinatorAgent
 **Tables (`setup.py`):**
 - `users` — id, username, password_hash, full_name, role, created_at, last_login, is_active
 - `job_postings` — id, title, company, description, requirements, desired_skills, seniority_level, work_model, salary_range, created_by FK users, created_at, is_active
-- `candidates` — id, full_name, email, phone, cpf, location, current_role, experience_years, education, skills TEXT JSON, resume_filename, resume_text, created_at, is_active
+- `candidates` — id, full_name, email, phone, cpf, location, current_role, experience_years, education, skills TEXT JSON, resume_filename, resume_text, resume_pdf BLOB, created_at, is_active
 - `matches` — id, candidate_id FK, job_posting_id FK, overall_score REAL, skills_score, experience_score, education_score, semantic_score, analysis TEXT, created_at
 - `pipeline` — id, candidate_id FK, job_posting_id FK, stage TEXT DEFAULT 'triagem', notes, updated_by FK users, updated_at
 - `conversations`, `messages`, `audit_log`, `governance_daily_stats` — unchanged
 
 **Seed (`seed.py`):**
-- `init_db()` calls `create_tables()` → `seed_users()` → `seed_database()` (order matters: users must exist before job_postings FK)
-- 20 candidates (Brazilian names): 5 AI/ML, 5 backend, 5 frontend, 5 data analysts
-- 2 job postings: "Engenheiro de IA Pleno", "Desenvolvedor Backend Sênior"
-- 40 pre-calculated match scores (all candidate×job combinations)
-- 20 pipeline entries (10 triagem, 5 entrevista, 3 teste_tecnico, 1 aprovado, 1 rejeitado)
-- 2 default users: `analyst/analyst123` and `manager/manager123`
+- `init_db()` calls `create_tables()` → `seed_users()`
+- Seeds only 2 default users: `analyst/analyst123` and `manager/manager123`
+- Candidates, job postings, matches, and pipeline entries are created exclusively via PDF upload through the dashboard — no sample/seed data for those tables
 
 ### Agents (`src/agents/`)
 
@@ -133,14 +130,16 @@ Recruiter question → CoordinatorAgent
 
 Key endpoints beyond standard auth/chat:
 - `POST /ingest` — classifies each PDF as resume/job_posting, routes to correct collection
+- `POST /ingest/job` — index a single job posting text or PDF
 - `GET /resumes` — indexed resumes from ChromaDB
+- `GET /resumes/{candidate_id}/download` — download original CV PDF (stored as BLOB in SQLite)
 - `GET /candidates` — candidates from SQLite
 - `GET /job-postings` — job postings from SQLite
 - `GET /pipeline` — pipeline entries with candidate/job info
 - `GET /matches/{job_id}` — ranked candidates for a job
+- `GET /matches/{candidate_id}/{job_posting_id}/details` — detailed score breakdown for one candidate×job pair
 - `POST /match/{job_id}` — calculate keyword+experience+education scores
 - `PATCH /pipeline/{candidate_id}/{job_id}` — move candidate to new stage
-- `POST /ingest/job` — index a single job posting text or PDF
 
 ### Frontend (`src/api/templates/`)
 
@@ -153,7 +152,7 @@ Key endpoints beyond standard auth/chat:
 - **NEVER use git worktrees.** Always work directly on `master` or create simple feature branches with `git checkout -b feature/xxx`. Worktrees cause environment fragmentation.
 - **Before pushing:** Run `python -m pytest tests/ --ignore=tests/diagnose_rag.py -v --tb=short` locally and confirm 0 failures.
 - **diagnose_rag.py is excluded from CI:** It makes real Ollama/ChromaDB calls and is not a pytest test.
-- **`seed_users()` before `seed_database()`:** job_postings has FK to users — order in `init_db()` matters.
+- **`create_tables()` before `seed_users()`:** `init_db()` must call them in this order — tables must exist before inserting users.
 - **ChromaDB collection routing:** Always pass `collection_name` to `index_chunks()` and `list_indexed_documents()` when targeting a specific collection. Default falls back to `settings.collection_name` ("resumes").
 
 ## CI/CD
