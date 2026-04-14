@@ -57,6 +57,20 @@ Resposta → SSE streaming → frontend (vanilla JS)
 
 ---
 
+## Destaques
+
+| Feature | Detalhe |
+|---------|---------|
+| Multi-agente sem lock-in | Ollama + Claude API com toggle no frontend |
+| SSE Streaming | Token-por-token em tempo real com animação |
+| Upload inteligente | Drag-and-drop por vaga, classificação automática currículo vs vaga |
+| Scorecard transparente | Modal com barras visuais, skill chips (match/missing/extra), detalhes |
+| Autenticação JWT | Roles (analyst/manager), controle por endpoint |
+| Memória conversacional | Sidebar com histórico, contexto no prompt |
+| Docker + CI/CD | Dockerfile, docker-compose, GitHub Actions (144 testes) |
+
+---
+
 ## Stack Tecnológico
 
 | Camada | Tecnologia |
@@ -289,5 +303,5 @@ techhire-ai/
 
 ## Autor
 
-Daniel Campetti — Engenheiro de Software / AI Engineer
+Daniel Campetti — Engenheiro Mecânico (UnB) | AI Engineer
 GitHub: [github.com/danielcampetti](https://github.com/danielcampetti)
