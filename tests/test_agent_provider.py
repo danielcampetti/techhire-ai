@@ -6,74 +6,70 @@ from src.retrieval.query_engine import RetrievedChunk
 
 def _mock_chunk():
     return RetrievedChunk(
-        content="Art. 1 — Prazo até 1º de março de 2026.",
+        content="Lucas Mendes — 5 anos de experiência em Python e RAG.",
         score=0.95,
-        metadata={"source": "resolucao.pdf", "page": 1},
+        metadata={"source": "lucas_mendes.pdf", "page": 1},
     )
 
 
 @pytest.mark.asyncio
-async def test_knowledge_agent_passes_provider_to_router():
+async def test_resume_agent_passes_provider_to_router():
     mock_gen = AsyncMock(return_value="resposta")
-    with patch("src.agents.knowledge_agent.retrieve", return_value=[_mock_chunk()]), \
-         patch("src.agents.knowledge_agent.build_prompt", return_value="prompt"), \
-         patch("src.agents.knowledge_agent.llm_router.generate", mock_gen):
-        from src.agents.knowledge_agent import KnowledgeAgent
-        agent = KnowledgeAgent()
-        resp = await agent.answer("Qual o prazo?", provider="claude")
+    with patch("src.agents.resume_agent.retrieve", return_value=[_mock_chunk()]), \
+         patch("src.agents.resume_agent.build_prompt", return_value="prompt"), \
+         patch("src.agents.resume_agent.llm_router.generate", mock_gen):
+        from src.agents.resume_agent import ResumeAgent
+        agent = ResumeAgent()
+        resp = await agent.answer("Qual a experiência do candidato?", provider="claude")
     mock_gen.assert_awaited_once_with("prompt", provider="claude")
     assert resp.answer == "resposta"
 
 
 @pytest.mark.asyncio
-async def test_knowledge_agent_default_provider_is_ollama():
+async def test_resume_agent_default_provider_is_ollama():
     mock_gen = AsyncMock(return_value="resp")
-    with patch("src.agents.knowledge_agent.retrieve", return_value=[_mock_chunk()]), \
-         patch("src.agents.knowledge_agent.build_prompt", return_value="prompt"), \
-         patch("src.agents.knowledge_agent.llm_router.generate", mock_gen):
-        from src.agents.knowledge_agent import KnowledgeAgent
-        agent = KnowledgeAgent()
-        await agent.answer("Qual o prazo?")
+    with patch("src.agents.resume_agent.retrieve", return_value=[_mock_chunk()]), \
+         patch("src.agents.resume_agent.build_prompt", return_value="prompt"), \
+         patch("src.agents.resume_agent.llm_router.generate", mock_gen):
+        from src.agents.resume_agent import ResumeAgent
+        agent = ResumeAgent()
+        await agent.answer("Qual a experiência do candidato?")
     mock_gen.assert_awaited_once_with("prompt", provider="ollama")
 
 
 @pytest.mark.asyncio
-async def test_data_agent_passes_provider_to_router():
-    with patch("src.agents.data_agent.init_db"), \
-         patch("src.agents.data_agent.llm_router.generate", new_callable=AsyncMock, side_effect=["SELECT 1", "interpretação"]) as mock_gen, \
-         patch("src.agents.data_agent._execute_sql", return_value=([(1,)], ["count"])):
-        import importlib
-        import src.agents.data_agent as _m
-        importlib.reload(_m)
-        agent = _m.DataAgent()
-        resp = await agent.answer("Quantas transações?", provider="claude")
+async def test_match_agent_passes_provider_to_router():
+    from src.agents.match_agent import MatchAgent
+    with patch("src.agents.match_agent.init_db"), \
+         patch("src.agents.match_agent.llm_router.generate", new_callable=AsyncMock, side_effect=["SELECT 1", "interpretação"]) as mock_gen, \
+         patch("src.agents.match_agent._execute_sql", return_value=([(1,)], ["count"])):
+        agent = MatchAgent()
+        resp = await agent.answer("Quantos candidatos?", provider="claude")
     assert mock_gen.await_count == 2
     for call in mock_gen.await_args_list:
-        args = call.args
-        kwargs = call.kwargs
-        assert kwargs.get("provider") == "claude" or (len(args) > 1 and args[1] == "claude")
+        assert call.kwargs.get("provider") == "claude"
 
 
 @pytest.mark.asyncio
-async def test_coordinator_threads_provider_to_knowledge_agent():
+async def test_coordinator_threads_provider_to_resume_agent():
     from src.agents.coordinator import CoordinatorAgent
 
-    mock_k_resp = MagicMock()
-    mock_k_resp.answer = "resposta regulatória"
-    mock_k_resp.sources = []
-    mock_k_resp.data = None
-    mock_k_resp.actions_taken = []
-    mock_k_resp.agent_name = "knowledge"
-    mock_k_resp.chunks_count = 0
+    mock_r_resp = MagicMock()
+    mock_r_resp.answer = "resposta currículos"
+    mock_r_resp.sources = []
+    mock_r_resp.data = None
+    mock_r_resp.actions_taken = []
+    mock_r_resp.agent_name = "resume"
+    mock_r_resp.chunks_count = 0
 
     with patch("src.agents.coordinator.init_db"), \
-         patch("src.agents.coordinator.CoordinatorAgent._classify", new_callable=AsyncMock, return_value="KNOWLEDGE"), \
+         patch("src.agents.coordinator.CoordinatorAgent._classify", new_callable=AsyncMock, return_value="RESUME"), \
          patch("src.agents.coordinator.audit.log_interaction", new_callable=AsyncMock, return_value=1):
         coordinator = CoordinatorAgent()
-        coordinator.knowledge_agent = MagicMock()
-        coordinator.knowledge_agent.answer = AsyncMock(return_value=mock_k_resp)
+        coordinator.resume_agent = MagicMock()
+        coordinator.resume_agent.answer = AsyncMock(return_value=mock_r_resp)
 
-        result = await coordinator.process("Qual o prazo?", provider="claude")
+        result = await coordinator.process("Qual a experiência do candidato?", provider="claude")
 
-    coordinator.knowledge_agent.answer.assert_awaited_once_with("Qual o prazo?", provider="claude", conversation_history=None)
+    coordinator.resume_agent.answer.assert_awaited_once_with("Qual a experiência do candidato?", provider="claude", conversation_history=None)
     assert result.provider_utilizado == "claude"

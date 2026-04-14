@@ -1,8 +1,9 @@
-"""Text chunking utilities for compliance documents.
+"""Text chunking utilities for resumes and job postings.
 
 Splits extracted PDF pages into overlapping semantic chunks using
-LangChain's RecursiveCharacterTextSplitter with regulatory-document-aware
-separators (sections/articles, then paragraphs, then sentences).
+LangChain's RecursiveCharacterTextSplitter. Uses smaller chunks for
+resumes (300/50) and larger chunks for job postings (500/100) to
+optimize precision for the short-document resume-matching use case.
 """
 from __future__ import annotations
 
@@ -84,20 +85,32 @@ def chunk_pages(
     pages: List[DocumentPage],
     chunk_size: int = 800,
     chunk_overlap: int = 100,
+    document_type: str = "generic",
 ) -> List[TextChunk]:
     """Split document pages into overlapping text chunks.
 
-    Uses hierarchical separators suited for regulatory documents:
-    section breaks -> paragraph breaks -> newlines -> sentences -> words.
+    Uses hierarchical separators: section breaks → paragraph breaks →
+    newlines → sentences → words. Chunk size is adjusted by document type:
+    - "resume": 300 chars / 50 overlap (short docs, precise skill matching)
+    - "job_posting": 500 chars / 100 overlap
+    - "generic" (default): uses the caller-provided chunk_size / chunk_overlap
 
     Args:
         pages: List of DocumentPage objects to chunk.
-        chunk_size: Target maximum characters per chunk.
-        chunk_overlap: Number of overlapping characters between adjacent chunks.
+        chunk_size: Target maximum characters per chunk (overridden by document_type).
+        chunk_overlap: Number of overlapping characters (overridden by document_type).
+        document_type: One of "resume", "job_posting", or "generic".
 
     Returns:
         List of TextChunk objects preserving source metadata.
     """
+    if document_type == "resume":
+        chunk_size = 300
+        chunk_overlap = 50
+    elif document_type == "job_posting":
+        chunk_size = 500
+        chunk_overlap = 100
+
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,

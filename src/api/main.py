@@ -1,17 +1,22 @@
-"""FastAPI application for ComplianceAgent.
+"""FastAPI application for TechHire AI.
 
 Endpoints:
-- GET  /           -- Chat UI (browser interface)
-- POST /ingest     -- Index all PDFs in data/raw/
-- POST /chat       -- Answer a regulatory question with source citations
-- GET  /documents  -- List all indexed documents
-- POST /diagnostic -- Raw RAG inspection without calling LLM
-- POST /evaluate   -- Grade a RAG response using Claude as judge
-- POST /test-pipeline -- Compare Ollama vs Claude on the same question
+- GET  /              -- Chat UI (browser interface)
+- POST /ingest        -- Index resume PDFs from data/raw/
+- POST /ingest/job    -- Index a job posting text or PDF
+- POST /chat          -- Answer a recruitment question with source citations
+- GET  /resumes       -- List all indexed resumes
+- GET  /candidates    -- List candidates with optional filters
+- GET  /job-postings  -- List job postings
+- GET  /matches/{job_id}  -- Ranked candidates for a job posting
+- POST /match/{job_id}    -- Recalculate match scores for a job posting
+- GET  /pipeline      -- List pipeline entries with optional stage filter
+- PATCH /pipeline/{candidate_id}/{job_id} -- Move candidate to a new stage
 """
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -27,8 +32,12 @@ from src.config import settings
 from src.api.auth import TokenUser, require_role
 from src.api.auth_routes import auth_router
 from src.ingestion.chunker import chunk_pages
-from src.ingestion.embedder import _get_client as _get_chroma_client
-from src.ingestion.embedder import index_chunks, list_indexed_documents
+from src.ingestion.embedder import (
+    _get_client as _get_chroma_client,
+    classify_document,
+    index_chunks,
+    list_indexed_documents,
+)
 from src.ingestion.pdf_loader import load_all_pdfs
 from src.llm import ollama_client, claude_client
 from src.retrieval.prompt_builder import build_prompt
@@ -43,8 +52,8 @@ from src.api.conversation_routes import conversation_router
 from src.api.governance import governance_router
 
 app = FastAPI(
-    title="ComplianceAgent API",
-    description="Sistema RAG para compliance e regulamentacao financeira brasileira",
+    title="TechHire AI API",
+    description="Plataforma inteligente de triagem de currículos com agentes de IA",
     version="1.0.0",
 )
 
@@ -76,7 +85,23 @@ class ChatResponse(BaseModel):
 class AgentRequest(BaseModel):
     pergunta: str
     provider: Optional[str] = None  # "ollama" or "claude"; falls back to settings.llm_provider
-    conversation_id: Optional[int] = None  # NEW — enables persistent memory
+    conversation_id: Optional[int] = None  # enables persistent memory
+
+
+class PipelineUpdateRequest(BaseModel):
+    stage: str
+    notes: Optional[str] = None
+
+
+class JobPostingRequest(BaseModel):
+    title: str
+    company: Optional[str] = None
+    description: str
+    requirements: Optional[str] = None
+    desired_skills: Optional[str] = None
+    seniority_level: Optional[str] = None
+    work_model: Optional[str] = None
+    salary_range: Optional[str] = None
 
 
 # -- Endpoints ----------------------------------------------------------------
@@ -97,18 +122,21 @@ async def dashboard_ui() -> HTMLResponse:
     return HTMLResponse(_DASHBOARD_PATH.read_text(encoding="utf-8"))
 
 
-@app.post("/ingest", summary="Indexar documentos PDF")
+@app.post("/ingest", summary="Indexar currículos PDF de data/raw/")
 async def ingest(_: TokenUser = Depends(require_role("manager"))) -> dict:
     """Processa todos os PDFs em data/raw/ e indexa seus chunks no ChromaDB.
 
+    Classifica automaticamente cada PDF como currículo ou vaga e usa a
+    coleção correta (resumes vs job_postings).
+
     Returns:
-        Dict com contagem de paginas processadas e chunks indexados.
+        Dict com contagem de páginas processadas e chunks indexados.
     """
     raw_dir = Path(settings.data_raw_dir)
     if not raw_dir.exists():
         raise HTTPException(
             status_code=404,
-            detail=f"Diretorio '{raw_dir}' nao encontrado. Crie-o e adicione PDFs.",
+            detail=f"Diretório '{raw_dir}' não encontrado. Crie-o e adicione PDFs.",
         )
 
     pages = load_all_pdfs(raw_dir)
@@ -119,19 +147,94 @@ async def ingest(_: TokenUser = Depends(require_role("manager"))) -> dict:
             "chunks_indexados": 0,
         }
 
-    chunks = chunk_pages(pages, settings.chunk_size, settings.chunk_overlap)
-    count = index_chunks(chunks)
+    # Group pages by filename and classify each document
+    from collections import defaultdict
+    pages_by_file: dict[str, list] = defaultdict(list)
+    for page in pages:
+        pages_by_file[page.filename].append(page)
+
+    total_chunks = 0
+    resume_files = 0
+    job_files = 0
+
+    for filename, file_pages in pages_by_file.items():
+        full_text = " ".join(p.content for p in file_pages)
+        doc_type = classify_document(full_text)
+
+        if doc_type == "resume":
+            chunks = chunk_pages(file_pages, document_type="resume")
+            collection = settings.collection_name  # "resumes"
+            resume_files += 1
+        else:
+            chunks = chunk_pages(file_pages, document_type="job_posting")
+            collection = settings.jobs_collection_name  # "job_postings"
+            job_files += 1
+
+        total_chunks += index_chunks(chunks, collection_name=collection)
 
     return {
-        "mensagem": "Indexacao concluida com sucesso.",
+        "mensagem": "Indexação concluída com sucesso.",
         "paginas_processadas": len(pages),
+        "chunks_indexados": total_chunks,
+        "curriculos_indexados": resume_files,
+        "vagas_indexadas": job_files,
+    }
+
+
+@app.post("/ingest/job", summary="Indexar uma vaga a partir de texto")
+async def ingest_job(
+    request: JobPostingRequest,
+    current_user: TokenUser = Depends(require_role("manager")),
+) -> dict:
+    """Salva uma vaga no banco de dados e indexa no ChromaDB.
+
+    Returns:
+        Dict com job_posting_id e chunks_indexados.
+    """
+    init_db()
+    now = datetime.utcnow().isoformat()
+
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO job_postings
+               (title, company, description, requirements, desired_skills,
+                seniority_level, work_model, salary_range, created_by, created_at, is_active)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (request.title, request.company, request.description,
+             request.requirements, request.desired_skills, request.seniority_level,
+             request.work_model, request.salary_range, current_user.user_id, now, True),
+        )
+        job_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    # Index the job posting text into ChromaDB
+    from src.ingestion.pdf_loader import DocumentPage
+    full_text = "\n\n".join(filter(None, [
+        request.title, request.description,
+        request.requirements, request.desired_skills,
+    ]))
+    page = DocumentPage(
+        content=full_text,
+        filename=f"job_{job_id}_{request.title[:30]}.txt",
+        page_number=1,
+        title=request.title,
+        metadata={"source": request.title, "company": request.company or "", "job_id": job_id},
+    )
+    chunks = chunk_pages([page], document_type="job_posting")
+    count = index_chunks(chunks, collection_name=settings.jobs_collection_name)
+
+    return {
+        "mensagem": "Vaga indexada com sucesso.",
+        "job_posting_id": job_id,
         "chunks_indexados": count,
     }
 
 
-@app.post("/chat", response_model=ChatResponse, summary="Consultar base regulatoria")
-async def chat(request: ChatRequest, _: TokenUser = Depends(require_role("analyst", "manager"))) -> ChatResponse:
-    """Recebe uma pergunta e retorna resposta com citacoes das fontes.
+@app.post("/chat", response_model=ChatResponse, summary="Consultar currículos indexados")
+async def chat(
+    request: ChatRequest,
+    _: TokenUser = Depends(require_role("analyst", "manager")),
+) -> ChatResponse:
+    """Recebe uma pergunta sobre candidatos e retorna resposta com citações das fontes.
 
     Args:
         request: JSON body com campo `pergunta`.
@@ -143,7 +246,7 @@ async def chat(request: ChatRequest, _: TokenUser = Depends(require_role("analys
 
     if not chunks:
         return ChatResponse(
-            resposta="Esta informacao nao foi encontrada nos documentos disponiveis.",
+            resposta="Esta informação não foi encontrada nos currículos disponíveis.",
             fontes=[],
         )
 
@@ -171,16 +274,319 @@ async def chat(request: ChatRequest, _: TokenUser = Depends(require_role("analys
     return ChatResponse(resposta=resposta, fontes=fontes)
 
 
-@app.get("/documents", summary="Listar documentos indexados")
-async def list_documents(_: TokenUser = Depends(require_role("analyst", "manager"))) -> dict:
-    """Lista todos os documentos unicos presentes no indice vetorial.
+@app.get("/resumes", summary="Listar currículos indexados")
+async def list_resumes(
+    _: TokenUser = Depends(require_role("analyst", "manager")),
+) -> dict:
+    """Lista todos os currículos únicos presentes no índice vetorial.
 
     Returns:
         Dict com lista de documentos e contagem total.
     """
     client = _get_chroma_client()
-    docs = list_indexed_documents(client)
-    return {"documentos": docs, "total": len(docs)}
+    docs = list_indexed_documents(client, collection_name=settings.collection_name)
+    return {"curriculos": docs, "total": len(docs)}
+
+
+@app.get("/candidates", summary="Listar candidatos")
+async def list_candidates(
+    score_min: Optional[float] = None,
+    score_max: Optional[float] = None,
+    job_posting_id: Optional[int] = None,
+    stage: Optional[str] = None,
+    _: TokenUser = Depends(require_role("analyst", "manager")),
+) -> dict:
+    """Lista candidatos com filtros opcionais de score e etapa do pipeline."""
+    init_db()
+    conditions: list[str] = []
+    params: list = []
+    join = ""
+
+    if job_posting_id is not None or score_min is not None or score_max is not None:
+        join = "LEFT JOIN matches m ON c.id = m.candidate_id"
+        if job_posting_id is not None:
+            conditions.append("m.job_posting_id = ?")
+            params.append(job_posting_id)
+        if score_min is not None:
+            conditions.append("m.overall_score >= ?")
+            params.append(score_min)
+        if score_max is not None:
+            conditions.append("m.overall_score <= ?")
+            params.append(score_max)
+
+    if stage is not None:
+        if not join:
+            join = "LEFT JOIN pipeline p ON c.id = p.candidate_id"
+        else:
+            join += " LEFT JOIN pipeline p ON c.id = p.candidate_id"
+        conditions.append("p.stage = ?")
+        params.append(stage)
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    order = "ORDER BY m.overall_score DESC" if join and "matches" in join else "ORDER BY c.created_at DESC"
+
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT c.* {', m.overall_score, m.skills_score, m.analysis' if 'matches' in join else ''} "
+            f"FROM candidates c {join} {where} {order}",
+            params,
+        ).fetchall()
+
+    return {"candidatos": [dict(r) for r in rows], "total": len(rows)}
+
+
+@app.get("/job-postings", summary="Listar vagas")
+async def list_job_postings(
+    _: TokenUser = Depends(require_role("analyst", "manager")),
+) -> dict:
+    """Lista todas as vagas ativas."""
+    init_db()
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM job_postings WHERE is_active = 1 ORDER BY created_at DESC"
+        ).fetchall()
+    return {"vagas": [dict(r) for r in rows], "total": len(rows)}
+
+
+@app.get("/matches/{job_id}", summary="Candidatos rankeados para uma vaga")
+async def get_matches(
+    job_id: int,
+    limit: int = 20,
+    _: TokenUser = Depends(require_role("analyst", "manager")),
+) -> dict:
+    """Retorna candidatos rankeados por score de aderência para uma vaga.
+
+    Args:
+        job_id: ID da vaga no banco de dados.
+        limit: Máximo de candidatos a retornar (default 20).
+
+    Returns:
+        Lista de candidatos com scores, ordenados por overall_score DESC.
+    """
+    init_db()
+    with get_db() as conn:
+        job = conn.execute(
+            "SELECT id, title, company FROM job_postings WHERE id = ?", (job_id,)
+        ).fetchone()
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Vaga #{job_id} não encontrada.")
+
+        rows = conn.execute(
+            """SELECT c.id, c.full_name, c.current_role, c.experience_years,
+                      c.location, c.education, c.skills,
+                      m.overall_score, m.skills_score, m.experience_score,
+                      m.education_score, m.semantic_score, m.analysis,
+                      p.stage
+               FROM matches m
+               JOIN candidates c ON c.id = m.candidate_id
+               LEFT JOIN pipeline p ON p.candidate_id = c.id AND p.job_posting_id = ?
+               WHERE m.job_posting_id = ? AND c.is_active = 1
+               ORDER BY m.overall_score DESC
+               LIMIT ?""",
+            (job_id, job_id, limit),
+        ).fetchall()
+
+    return {
+        "vaga": {"id": job["id"], "title": job["title"], "company": job["company"]},
+        "candidatos": [dict(r) for r in rows],
+        "total": len(rows),
+    }
+
+
+@app.post("/match/{job_id}", summary="Calcular match scores para uma vaga")
+async def calculate_matches(
+    job_id: int,
+    _: TokenUser = Depends(require_role("manager")),
+) -> dict:
+    """Recalcula scores de aderência para todos os candidatos ativos contra uma vaga.
+
+    Uses keyword skill matching and experience scoring (semantic scoring
+    requires ChromaDB embeddings to be populated via /ingest first).
+
+    Returns:
+        Dict com total de scores calculados.
+    """
+    init_db()
+    now = datetime.utcnow().isoformat()
+
+    with get_db() as conn:
+        job = conn.execute(
+            "SELECT * FROM job_postings WHERE id = ?", (job_id,)
+        ).fetchone()
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Vaga #{job_id} não encontrada.")
+
+        candidates = conn.execute(
+            "SELECT * FROM candidates WHERE is_active = 1"
+        ).fetchall()
+
+    required_skills = set(
+        s.strip().lower()
+        for s in (job["requirements"] or "").replace(",", " ").split()
+        if len(s.strip()) > 2
+    )
+
+    calculated = 0
+    with get_db() as conn:
+        for cand in candidates:
+            import json as _json
+            try:
+                cand_skills = set(s.lower() for s in _json.loads(cand["skills"] or "[]"))
+            except Exception:
+                cand_skills = set()
+
+            skills_score = (
+                len(cand_skills & required_skills) / len(required_skills)
+                if required_skills else 0.5
+            )
+
+            req_exp = 3  # default
+            import re as _re
+            exp_match = _re.search(r"(\d+)\+?\s*anos", job["requirements"] or "", _re.IGNORECASE)
+            if exp_match:
+                req_exp = int(exp_match.group(1))
+            exp_years = cand["experience_years"] or 0
+            experience_score = min(exp_years / max(req_exp, 1), 1.0)
+
+            education_score = 0.7
+            edu = (cand["education"] or "").lower()
+            if "doutorado" in edu or "phd" in edu:
+                education_score = 1.0
+            elif "mestrado" in edu or "mba" in edu:
+                education_score = 0.9
+            elif "bacharelado" in edu or "graduação" in edu or "graduacao" in edu:
+                education_score = 0.75
+
+            overall_score = round(
+                0.5 * skills_score + 0.3 * experience_score + 0.2 * education_score, 4
+            )
+
+            existing = conn.execute(
+                "SELECT id FROM matches WHERE candidate_id=? AND job_posting_id=?",
+                (cand["id"], job_id),
+            ).fetchone()
+
+            if existing:
+                conn.execute(
+                    """UPDATE matches SET overall_score=?, skills_score=?,
+                       experience_score=?, education_score=?, created_at=?
+                       WHERE candidate_id=? AND job_posting_id=?""",
+                    (overall_score, skills_score, experience_score, education_score,
+                     now, cand["id"], job_id),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO matches
+                       (candidate_id, job_posting_id, overall_score, skills_score,
+                        experience_score, education_score, created_at)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (cand["id"], job_id, overall_score, skills_score,
+                     experience_score, education_score, now),
+                )
+            calculated += 1
+
+    return {
+        "mensagem": f"Scores calculados para {calculated} candidatos.",
+        "job_posting_id": job_id,
+        "total_calculado": calculated,
+    }
+
+
+@app.get("/pipeline", summary="Listar pipeline de contratação")
+async def list_pipeline(
+    stage: Optional[str] = None,
+    job_posting_id: Optional[int] = None,
+    _: TokenUser = Depends(require_role("analyst", "manager")),
+) -> dict:
+    """Lista entradas do pipeline com filtros opcionais de etapa e vaga."""
+    init_db()
+    conditions: list[str] = []
+    params: list = []
+
+    if stage:
+        conditions.append("p.stage = ?")
+        params.append(stage)
+    if job_posting_id is not None:
+        conditions.append("p.job_posting_id = ?")
+        params.append(job_posting_id)
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    with get_db() as conn:
+        rows = conn.execute(
+            f"""SELECT p.*, c.full_name, c.current_role, c.experience_years,
+                       j.title as job_title
+                FROM pipeline p
+                JOIN candidates c ON c.id = p.candidate_id
+                JOIN job_postings j ON j.id = p.job_posting_id
+                {where}
+                ORDER BY CASE p.stage
+                  WHEN 'triagem' THEN 1 WHEN 'entrevista' THEN 2
+                  WHEN 'teste_tecnico' THEN 3 WHEN 'aprovado' THEN 4
+                  WHEN 'rejeitado' THEN 5 ELSE 6 END,
+                p.updated_at DESC""",
+            params,
+        ).fetchall()
+
+    return {"pipeline": [dict(r) for r in rows], "total": len(rows)}
+
+
+@app.patch("/pipeline/{candidate_id}/{job_id}", summary="Mover candidato de etapa")
+async def update_pipeline_stage(
+    candidate_id: int,
+    job_id: int,
+    request: PipelineUpdateRequest,
+    current_user: TokenUser = Depends(require_role("analyst", "manager")),
+) -> dict:
+    """Move um candidato para uma nova etapa do pipeline.
+
+    Args:
+        candidate_id: ID do candidato.
+        job_id: ID da vaga.
+        request: JSON body com stage e notes opcionais.
+
+    Returns:
+        Dict com confirmação e nova etapa.
+    """
+    valid_stages = ("triagem", "entrevista", "teste_tecnico", "aprovado", "rejeitado")
+    if request.stage not in valid_stages:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Etapa inválida. Use: {', '.join(valid_stages)}",
+        )
+
+    init_db()
+    now = datetime.utcnow().isoformat()
+
+    with get_db() as conn:
+        cand = conn.execute(
+            "SELECT full_name FROM candidates WHERE id=?", (candidate_id,)
+        ).fetchone()
+        if not cand:
+            raise HTTPException(status_code=404, detail=f"Candidato #{candidate_id} não encontrado.")
+
+        existing = conn.execute(
+            "SELECT id FROM pipeline WHERE candidate_id=? AND job_posting_id=?",
+            (candidate_id, job_id),
+        ).fetchone()
+
+        if existing:
+            conn.execute(
+                "UPDATE pipeline SET stage=?, notes=?, updated_by=?, updated_at=? "
+                "WHERE candidate_id=? AND job_posting_id=?",
+                (request.stage, request.notes, current_user.user_id, now, candidate_id, job_id),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO pipeline (candidate_id, job_posting_id, stage, notes, updated_by, updated_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (candidate_id, job_id, request.stage, request.notes, current_user.user_id, now),
+            )
+
+    return {
+        "mensagem": f"Candidato {cand['full_name']} movido para '{request.stage}'.",
+        "candidate_id": candidate_id,
+        "new_stage": request.stage,
+    }
 
 
 @app.post("/agent", response_model=CoordinatorResponse)
@@ -199,13 +605,11 @@ async def agent_endpoint(
 
     conversation_history = None
     if request.conversation_id is not None:
-        # Verify ownership before any read or write
         if svc.get_by_id(request.conversation_id, current_user.user_id) is None:
             raise HTTPException(
                 status_code=404,
                 detail="Conversa não encontrada ou sem permissão de acesso.",
             )
-        # Snapshot history BEFORE saving current message (these are the prior exchanges)
         conversation_history = svc.get_context_messages(
             request.conversation_id, max_messages=10
         )
@@ -324,91 +728,3 @@ async def agent_stream_endpoint(
             "X-Accel-Buffering": "no",
         },
     )
-
-
-@app.get("/alerts")
-async def list_alerts(
-    status: Optional[str] = None,
-    severity: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    _: TokenUser = Depends(require_role("analyst", "manager")),
-) -> dict:
-    """List compliance alerts with optional filters."""
-    init_db()
-    conditions: list[str] = []
-    params: list = []
-
-    if status:
-        conditions.append("status = ?")
-        params.append(status)
-    if severity:
-        conditions.append("severity = ?")
-        params.append(severity)
-    if date_from:
-        conditions.append("created_at >= ?")
-        params.append(date_from)
-    if date_to:
-        conditions.append("created_at <= ?")
-        params.append(date_to)
-
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    with get_db() as conn:
-        rows = conn.execute(
-            f"SELECT * FROM alerts {where} ORDER BY created_at DESC", params
-        ).fetchall()
-
-    return {
-        "alertas": [dict(r) for r in rows],
-        "total": len(rows),
-    }
-
-
-@app.get("/transactions")
-async def list_transactions(
-    transaction_type: Optional[str] = None,
-    amount_min: Optional[float] = None,
-    amount_max: Optional[float] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    reported_to_coaf: Optional[bool] = None,
-    pep_flag: Optional[bool] = None,
-    _: TokenUser = Depends(require_role("analyst", "manager")),
-) -> dict:
-    """List transactions with optional filters."""
-    init_db()
-    conditions: list[str] = []
-    params: list = []
-
-    if transaction_type:
-        conditions.append("transaction_type = ?")
-        params.append(transaction_type)
-    if amount_min is not None:
-        conditions.append("amount >= ?")
-        params.append(amount_min)
-    if amount_max is not None:
-        conditions.append("amount <= ?")
-        params.append(amount_max)
-    if date_from:
-        conditions.append("date >= ?")
-        params.append(date_from)
-    if date_to:
-        conditions.append("date <= ?")
-        params.append(date_to)
-    if reported_to_coaf is not None:
-        conditions.append("reported_to_coaf = ?")
-        params.append(1 if reported_to_coaf else 0)
-    if pep_flag is not None:
-        conditions.append("pep_flag = ?")
-        params.append(1 if pep_flag else 0)
-
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    with get_db() as conn:
-        rows = conn.execute(
-            f"SELECT * FROM transactions {where} ORDER BY date DESC", params
-        ).fetchall()
-
-    return {
-        "transacoes": [dict(r) for r in rows],
-        "total": len(rows),
-    }

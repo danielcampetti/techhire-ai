@@ -170,68 +170,59 @@ def test_chunk_pages_applies_cleaning():
     assert "1º de março de 2026" in combined
 
 
-# ── Fix 3: Document context prepending ────────────────────────────────────────
+# ── Fix 3: Document classification and indexing ───────────────────────────────
 
-def test_doc_label_from_res_filename_with_4digit_number():
-    """res_5274_DD_MM_YYYY.pdf → 'Resolução CMN nº 5.274/2025'."""
-    from src.ingestion.embedder import _doc_label
-    assert _doc_label("res_5274_18_12_2025.pdf") == "Resolução CMN nº 5.274/2025"
-
-
-def test_doc_label_from_res_filename_with_dotted_number():
-    """res_4.893_DD_MM_YYYY.pdf → 'Resolução CMN nº 4.893/2021'."""
-    from src.ingestion.embedder import _doc_label
-    assert _doc_label("res_4.893_26_02_2021.pdf") == "Resolução CMN nº 4.893/2021"
-
-
-def test_doc_label_from_circular_filename():
-    """Circ_3978_*.pdf → 'Circular BCB nº 3.978'."""
-    from src.ingestion.embedder import _doc_label
-    assert _doc_label("Circ_3978_v3_P.pdf") == "Circular BCB nº 3.978"
+def test_classify_document_returns_resume_for_resume_text():
+    """Text with resume keywords should be classified as 'resume'."""
+    from src.ingestion.embedder import classify_document
+    text = (
+        "Lucas Mendes — Engenheiro de IA\n"
+        "EXPERIÊNCIA: Python, RAG, LLMs\n"
+        "FORMAÇÃO: Mestrado em Computação\n"
+        "HABILIDADES: FastAPI, Docker\n"
+        "Trabalhei em FinTech por 5 anos."
+    )
+    assert classify_document(text) == "resume"
 
 
-def test_doc_label_fallback_for_unknown_filename():
-    """Unknown filename patterns should return the filename stem."""
-    from src.ingestion.embedder import _doc_label
-    assert _doc_label("unknown_document.pdf") == "unknown_document"
+def test_classify_document_returns_job_posting_for_job_text():
+    """Text with job posting keywords should be classified as 'job_posting'."""
+    from src.ingestion.embedder import classify_document
+    text = (
+        "Buscamos Engenheiro de IA Pleno\n"
+        "REQUISITOS: Python, RAG, LLMs, 3+ anos\n"
+        "RESPONSABILIDADES: desenvolver APIs de IA\n"
+        "BENEFÍCIOS: plano de saúde, home office\n"
+        "Candidate-se agora. Oferta de trabalho remoto."
+    )
+    assert classify_document(text) == "job_posting"
 
 
-def test_index_chunks_prepends_doc_context_to_embeddings():
-    """Embeddings must use context-prefixed text; stored document must be the original."""
+def test_index_chunks_stores_original_content():
+    """Stored documents in ChromaDB must be the original clean content."""
     from src.ingestion.chunker import TextChunk
     from src.ingestion import embedder as emb_mod  # import before patching
 
     chunk = TextChunk(
-        content="devem promover as adaptações até 1º de março de 2026.",
-        filename="res_5274_18_12_2025.pdf",
-        page_number=4,
-        title="Resolução CMN nº 5.274/2025",
+        content="Lucas Mendes tem 5 anos de experiência em Python e RAG.",
+        filename="lucas_mendes.pdf",
+        page_number=1,
+        title="Lucas Mendes",
         chunk_index=0,
-        metadata={"source": "res_5274_18_12_2025.pdf", "page": 4},
+        metadata={"source": "lucas_mendes.pdf", "page": 1},
     )
-
-    encoded_texts: list[str] = []
-
-    def fake_encode(texts, **kwargs):
-        encoded_texts.extend(texts)
-        return np.zeros((len(texts), 384))
-
-    mock_model = MagicMock()
-    mock_model.encode.side_effect = fake_encode
 
     added_documents: list[str] = []
     mock_collection = MagicMock()
     mock_collection.add.side_effect = lambda **kw: added_documents.extend(kw.get("documents", []))
+
+    mock_model = MagicMock()
+    mock_model.encode.return_value = np.zeros((1, 384))
 
     with patch("src.ingestion.embedder.SentenceTransformer", return_value=mock_model), \
          patch("src.ingestion.embedder._get_client"), \
          patch("src.ingestion.embedder._get_collection", return_value=mock_collection):
         emb_mod.index_chunks([chunk])
 
-    # Embedding text must carry the doc context prefix
-    assert len(encoded_texts) == 1
-    assert "[Resolução CMN nº 5.274/2025]" in encoded_texts[0]
-
-    # Stored document must be the original clean content
     assert len(added_documents) == 1
     assert added_documents[0] == chunk.content

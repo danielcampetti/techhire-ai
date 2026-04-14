@@ -1,46 +1,10 @@
-"""Create all compliance database tables."""
+"""Create all TechHire AI database tables."""
 from __future__ import annotations
 
 from src.database.connection import get_db
 
 
 _DDL = """
-CREATE TABLE IF NOT EXISTS transactions (
-    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    client_name        TEXT    NOT NULL,
-    client_cpf         TEXT    NOT NULL,
-    transaction_type   TEXT    NOT NULL,
-    amount             REAL    NOT NULL,
-    date               TEXT    NOT NULL,
-    branch             TEXT,
-    channel            TEXT,
-    reported_to_coaf   BOOLEAN DEFAULT FALSE,
-    pep_flag           BOOLEAN DEFAULT FALSE,
-    notes              TEXT
-);
-
-CREATE TABLE IF NOT EXISTS alerts (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    transaction_id   INTEGER,
-    alert_type       TEXT NOT NULL,
-    severity         TEXT NOT NULL,
-    description      TEXT NOT NULL,
-    status           TEXT DEFAULT 'open',
-    created_at       TEXT NOT NULL,
-    resolved_at      TEXT,
-    FOREIGN KEY (transaction_id) REFERENCES transactions(id)
-);
-
-CREATE TABLE IF NOT EXISTS agent_log (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp       TEXT NOT NULL,
-    agent_name      TEXT NOT NULL,
-    action          TEXT NOT NULL,
-    input_summary   TEXT,
-    output_summary  TEXT,
-    tokens_used     INTEGER
-);
-
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     username      TEXT    NOT NULL UNIQUE,
@@ -50,6 +14,67 @@ CREATE TABLE IF NOT EXISTS users (
     created_at    TEXT    NOT NULL,
     last_login    TEXT,
     is_active     BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS job_postings (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    title          TEXT    NOT NULL,
+    company        TEXT,
+    description    TEXT    NOT NULL,
+    requirements   TEXT,
+    desired_skills TEXT,
+    seniority_level TEXT,
+    work_model     TEXT,
+    salary_range   TEXT,
+    created_by     INTEGER,
+    created_at     TEXT    NOT NULL,
+    is_active      BOOLEAN DEFAULT TRUE,
+    FOREIGN KEY (created_by) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS candidates (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    full_name        TEXT    NOT NULL,
+    email            TEXT,
+    phone            TEXT,
+    cpf              TEXT,
+    location         TEXT,
+    current_role     TEXT,
+    experience_years INTEGER,
+    education        TEXT,
+    skills           TEXT,
+    resume_filename  TEXT    NOT NULL,
+    resume_text      TEXT,
+    created_at       TEXT    NOT NULL,
+    is_active        BOOLEAN DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS matches (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    candidate_id     INTEGER NOT NULL,
+    job_posting_id   INTEGER NOT NULL,
+    overall_score    REAL    NOT NULL,
+    skills_score     REAL,
+    experience_score REAL,
+    education_score  REAL,
+    semantic_score   REAL,
+    analysis         TEXT,
+    created_at       TEXT    NOT NULL,
+    FOREIGN KEY (candidate_id) REFERENCES candidates(id),
+    FOREIGN KEY (job_posting_id) REFERENCES job_postings(id)
+);
+
+CREATE TABLE IF NOT EXISTS pipeline (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    candidate_id     INTEGER NOT NULL,
+    job_posting_id   INTEGER NOT NULL,
+    stage            TEXT    NOT NULL DEFAULT 'triagem',
+    notes            TEXT,
+    updated_by       INTEGER,
+    updated_at       TEXT    NOT NULL,
+    FOREIGN KEY (candidate_id) REFERENCES candidates(id),
+    FOREIGN KEY (job_posting_id) REFERENCES job_postings(id),
+    FOREIGN KEY (updated_by) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS conversations (
@@ -124,22 +149,6 @@ def create_tables() -> None:
             s = statement.strip()
             if s:
                 conn.execute(s)
-
-
-def migrate_audit_log_add_user_columns() -> None:
-    """Add user_id/username to audit_log if missing (idempotent).
-
-    Only needed for databases created before these columns were added to the DDL.
-    Safe to call on any database — new columns are already present in CREATE TABLE.
-    """
-    with get_db() as conn:
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(audit_log)")}
-        if not cols:
-            return  # Table doesn't exist yet — CREATE TABLE IF NOT EXISTS will handle it
-        if "user_id" not in cols:
-            conn.execute("ALTER TABLE audit_log ADD COLUMN user_id INTEGER")
-        if "username" not in cols:
-            conn.execute("ALTER TABLE audit_log ADD COLUMN username TEXT")
 
 
 if __name__ == "__main__":

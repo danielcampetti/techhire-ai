@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ComplianceAgent</title>
+    <title>TechHire AI</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=JetBrains+Mono:wght@300;400&family=Outfit:wght@300;400;500&display=swap" rel="stylesheet">
     <style>
@@ -727,8 +727,8 @@
 
     <header>
         <div class="brand">
-            <span class="brand-name">ComplianceAgent</span>
-            <span class="brand-sub">BCB · CVM · CMN</span>
+            <span class="brand-name">TechHire AI</span>
+            <span class="brand-sub">RECRUTAMENTO INTELIGENTE</span>
         </div>
         <div class="header-right">
             <button class="hamburger" onclick="toggleSidebar()" title="Conversas">☰</button>
@@ -746,21 +746,21 @@
 
     <div id="messages">
         <div id="welcome">
-            <div class="welcome-glyph">⚖️</div>
+            <div class="welcome-glyph">👥</div>
             <h2>Consultoria Regulatória</h2>
-            <p>Faça perguntas sobre regulamentação do Banco Central, CVM e CMN. As respostas são fundamentadas exclusivamente nos documentos indexados.</p>
+            <p>Analise currículos, compare candidatos e gerencie seu pipeline de contratação.</p>
             <div class="chips">
-                <button class="chip" onclick="useChip(this)">O que diz a Circular 3.978?</button>
-                <button class="chip" onclick="useChip(this)">Quais as obrigações de PLD/FT?</button>
-                <button class="chip" onclick="useChip(this)">Quantas transações não foram reportadas ao COAF?</button>
-                <button class="chip" onclick="useChip(this)">Gere um relatório de alertas abertos</button>
+                <button class="chip" onclick="useChip(this)">Quais candidatos têm experiência com Python?</button>
+                <button class="chip" onclick="useChip(this)">Rankeie os top 5 para a vaga de IA</button>
+                <button class="chip" onclick="useChip(this)">Qual o status do funil de contratação?</button>
+                <button class="chip" onclick="useChip(this)">Compare os candidatos João e Maria</button>
             </div>
         </div>
     </div>
 
     <div id="input-area">
         <div class="input-wrap">
-            <textarea id="question" placeholder="Faça uma pergunta sobre regulamentação financeira..." rows="1"></textarea>
+            <textarea id="question" placeholder="Faça uma pergunta sobre candidatos e vagas..." rows="1"></textarea>
             <button id="send" onclick="send()">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M22 2L11 13"/><path d="M22 2L15 22 11 13 2 9l20-7z"/>
@@ -1086,7 +1086,7 @@
             const w = document.createElement('div');
             w.id = 'welcome';
             w.innerHTML = `
-                <div class="welcome-glyph">⚖️</div>
+                <div class="welcome-glyph">👥</div>
                 <h2>Consultoria Regulatória</h2>
                 <p>Faça perguntas sobre regulamentação do Banco Central, CVM e CMN. As respostas são fundamentadas exclusivamente nos documentos indexados.</p>
                 <div class="chips">

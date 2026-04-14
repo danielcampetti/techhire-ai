@@ -9,102 +9,105 @@ from src.agents.base import AgentResponse
 
 
 class TestHeuristicRoute:
-    def test_routes_regulatory_to_knowledge(self):
-        assert _heuristic_route("O que diz a Resolução CMN 5.274?") == "KNOWLEDGE"
+    def test_routes_candidate_question_to_resume(self):
+        assert _heuristic_route("Quais candidatos têm experiência com Python?") == "RESUME"
 
-    def test_routes_data_question_to_data(self):
-        assert _heuristic_route("Quantas transações em espécie temos?") == "DATA"
+    def test_routes_ranking_question_to_match(self):
+        assert _heuristic_route("Rankeie por score de aderência") == "MATCH"
 
-    def test_routes_action_request_to_action(self):
-        assert _heuristic_route("Crie um alerta para essa transação") == "ACTION"
+    def test_routes_pipeline_request_to_pipeline(self):
+        assert _heuristic_route("Mova o candidato para entrevista") == "PIPELINE"
 
-    def test_routes_combined_to_knowledge_data(self):
-        q = "Verifique se as transações em espécie estão em conformidade com a Resolução 3.978"
-        assert _heuristic_route(q) == "KNOWLEDGE+DATA"
+    def test_routes_combined_to_resume_match(self):
+        q = "Compare o perfil do candidato com o score de aderência para a vaga"
+        assert _heuristic_route(q) == "RESUME+MATCH"
 
 
 class TestEnhancedHeuristicRoute:
-    """Tests for the enhanced accent-insensitive keyword classifier."""
+    """Tests for the accent-insensitive keyword classifier."""
 
-    def test_data_route_transacoes(self):
-        assert _heuristic_route("Quantas transações não foram reportadas ao COAF?") == "DATA"
+    def test_resume_route_candidato(self):
+        assert _heuristic_route("Quem é o candidato Lucas Mendes?") == "RESUME"
 
-    def test_data_route_transacoes_no_accent(self):
-        assert _heuristic_route("Quantas transacoes nao foram reportadas ao coaf?") == "DATA"
+    def test_resume_route_curriculo(self):
+        assert _heuristic_route("Mostre o currículo de Ana Beatriz") == "RESUME"
 
-    def test_data_route_clientes_pep(self):
-        assert _heuristic_route("Quais clientes são PEP?") == "DATA"
+    def test_resume_route_habilidades(self):
+        assert _heuristic_route("Quais são as habilidades do candidato?") == "RESUME"
 
-    def test_data_route_valor_total(self):
-        assert _heuristic_route("Qual o valor total em espécie não reportado?") == "DATA"
+    def test_resume_route_no_accent(self):
+        assert _heuristic_route("Qual a formacao do candidato?") == "RESUME"
 
-    def test_data_route_reais(self):
-        assert _heuristic_route("Operações acima de R$ 50.000") == "DATA"
+    def test_match_route_score(self):
+        assert _heuristic_route("Qual o score para a vaga atual?") == "MATCH"
 
-    def test_action_route_gere_relatorio(self):
-        assert _heuristic_route("Gere um relatório de alertas abertos") == "ACTION"
+    def test_match_route_ranking(self):
+        assert _heuristic_route("Rankeie os top 5 para a vaga de IA") == "MATCH"
 
-    def test_action_route_crie_alerta(self):
-        assert _heuristic_route("Crie um alerta para cliente suspeito") == "ACTION"
+    def test_match_route_comparar(self):
+        assert _heuristic_route("Compare os scores para a vaga") == "MATCH"
 
-    def test_action_route_resolver(self):
-        assert _heuristic_route("Resolver alerta #3") == "ACTION"
+    def test_pipeline_route_mover(self):
+        assert _heuristic_route("Mova o candidato #3 para entrevista") == "PIPELINE"
 
-    def test_knowledge_data_combined(self):
-        assert _heuristic_route("Verifique se estamos em conformidade com o Art. 49 sobre operações em espécie") == "KNOWLEDGE+DATA"
+    def test_pipeline_route_rejeitar(self):
+        assert _heuristic_route("Rejeite o candidato com score baixo") == "PIPELINE"
 
-    def test_knowledge_regulation_only(self):
-        assert _heuristic_route("Qual o prazo da Resolução CMN 5.274/2025?") == "KNOWLEDGE"
+    def test_pipeline_route_aprovar(self):
+        assert _heuristic_route("Aprove o candidato #1 para a vaga") == "PIPELINE"
 
-    def test_knowledge_default(self):
-        assert _heuristic_route("O que é PLD?") == "KNOWLEDGE"
+    def test_pipeline_route_funil(self):
+        assert _heuristic_route("Qual o status do funil de contratação?") == "PIPELINE"
 
-    def test_knowledge_ciberseguranca(self):
-        assert _heuristic_route("Quais são os requisitos de cibersegurança?") == "KNOWLEDGE"
+    def test_pipeline_route_email_feedback(self):
+        assert _heuristic_route("Gere e-mail de feedback para o candidato") == "PIPELINE"
+
+    def test_resume_default(self):
+        assert _heuristic_route("O que é Python?") == "RESUME"
 
 
 class TestClassifyNoLlm:
     """_classify() should never call llm_router.generate for routing."""
 
     @pytest.mark.asyncio
-    async def test_classify_data_does_not_call_llm(self):
+    async def test_classify_match_does_not_call_llm(self):
         from unittest.mock import patch, AsyncMock
         with patch("src.agents.coordinator.llm_router") as mock_router:
-            mock_router.generate = AsyncMock(return_value="DATA")
+            mock_router.generate = AsyncMock(return_value="MATCH")
             coordinator = CoordinatorAgent.__new__(CoordinatorAgent)
-            result = await coordinator._classify("Quantas transações não foram reportadas?")
+            result = await coordinator._classify("Rankeie por score de aderência")
         mock_router.generate.assert_not_called()
-        assert result == "DATA"
+        assert result == "MATCH"
 
     @pytest.mark.asyncio
-    async def test_classify_knowledge_does_not_call_llm(self):
+    async def test_classify_resume_does_not_call_llm(self):
         from unittest.mock import patch, AsyncMock
         with patch("src.agents.coordinator.llm_router") as mock_router:
-            mock_router.generate = AsyncMock(return_value="KNOWLEDGE")
+            mock_router.generate = AsyncMock(return_value="RESUME")
             coordinator = CoordinatorAgent.__new__(CoordinatorAgent)
-            result = await coordinator._classify("O que é compliance financeiro?")
+            result = await coordinator._classify("Quais as habilidades do candidato?")
         mock_router.generate.assert_not_called()
-        assert result == "KNOWLEDGE"
+        assert result == "RESUME"
 
     @pytest.mark.asyncio
-    async def test_classify_action_does_not_call_llm(self):
+    async def test_classify_pipeline_does_not_call_llm(self):
         from unittest.mock import patch, AsyncMock
         with patch("src.agents.coordinator.llm_router") as mock_router:
-            mock_router.generate = AsyncMock(return_value="ACTION")
+            mock_router.generate = AsyncMock(return_value="PIPELINE")
             coordinator = CoordinatorAgent.__new__(CoordinatorAgent)
-            result = await coordinator._classify("Crie um alerta para cliente suspeito")
+            result = await coordinator._classify("Mova o candidato para entrevista")
         mock_router.generate.assert_not_called()
-        assert result == "ACTION"
+        assert result == "PIPELINE"
 
     @pytest.mark.asyncio
-    async def test_classify_knowledge_data_does_not_call_llm(self):
+    async def test_classify_resume_match_does_not_call_llm(self):
         from unittest.mock import patch, AsyncMock
         with patch("src.agents.coordinator.llm_router") as mock_router:
-            mock_router.generate = AsyncMock(return_value="KNOWLEDGE+DATA")
+            mock_router.generate = AsyncMock(return_value="RESUME+MATCH")
             coordinator = CoordinatorAgent.__new__(CoordinatorAgent)
-            result = await coordinator._classify("Verifique o Art. 49 sobre transações em espécie")
+            result = await coordinator._classify("Compare o currículo do candidato com o score de aderência")
         mock_router.generate.assert_not_called()
-        assert result == "KNOWLEDGE+DATA"
+        assert result == "RESUME+MATCH"
 
 
 class TestCoordinatorProcess:
@@ -114,48 +117,48 @@ class TestCoordinatorProcess:
         monkeypatch.setattr(conn_mod.settings, "db_path", str(tmp_path / "test.db"))
 
     @pytest.mark.asyncio
-    async def test_routes_to_knowledge_agent(self, db_tmp):
-        mock_k_response = AgentResponse(
-            agent_name="knowledge", answer="Prazo: 1º de março de 2026.", confidence=0.9
+    async def test_routes_to_resume_agent(self, db_tmp):
+        mock_r_response = AgentResponse(
+            agent_name="resume", answer="Lucas Mendes tem 5 anos de experiência em IA.", confidence=0.9
         )
         coord = CoordinatorAgent.__new__(CoordinatorAgent)
-        coord.knowledge_agent = AsyncMock()
-        coord.knowledge_agent.answer = AsyncMock(return_value=mock_k_response)
-        coord.data_agent = AsyncMock()
-        coord.action_agent = AsyncMock()
+        coord.resume_agent = AsyncMock()
+        coord.resume_agent.answer = AsyncMock(return_value=mock_r_response)
+        coord.match_agent = AsyncMock()
+        coord.pipeline_agent = AsyncMock()
 
         with patch("src.agents.coordinator.llm_router.generate",
-                   new_callable=AsyncMock, return_value="KNOWLEDGE"), \
+                   new_callable=AsyncMock, return_value="RESUME"), \
              patch("src.agents.coordinator.init_db"), \
              patch("src.agents.coordinator.audit.log_interaction",
                    new_callable=AsyncMock, return_value=1):
-            result = await coord.process("Qual o prazo da Resolução 5.274?")
+            result = await coord.process("Quem tem experiência com Python?")
 
         assert isinstance(result, CoordinatorResponse)
-        assert result.roteamento == "KNOWLEDGE"
-        assert "knowledge" in result.agentes_utilizados
+        assert result.roteamento == "RESUME"
+        assert "resume" in result.agentes_utilizados
         assert result.provider_utilizado == "ollama"
 
     @pytest.mark.asyncio
-    async def test_routes_to_data_agent(self, db_tmp):
-        mock_d_response = AgentResponse(
-            agent_name="data", answer="50 transações.", confidence=0.85,
-            data={"sql": "SELECT COUNT(*) FROM transactions", "rows": [], "total": 50}
+    async def test_routes_to_match_agent(self, db_tmp):
+        mock_m_response = AgentResponse(
+            agent_name="match", answer="Top 5 candidatos por score.", confidence=0.85,
+            data={"sql": "SELECT * FROM matches ORDER BY overall_score DESC", "rows": [], "total": 5}
         )
         coord = CoordinatorAgent.__new__(CoordinatorAgent)
-        coord.knowledge_agent = AsyncMock()
-        coord.data_agent = AsyncMock()
-        coord.data_agent.answer = AsyncMock(return_value=mock_d_response)
-        coord.action_agent = AsyncMock()
+        coord.resume_agent = AsyncMock()
+        coord.match_agent = AsyncMock()
+        coord.match_agent.answer = AsyncMock(return_value=mock_m_response)
+        coord.pipeline_agent = AsyncMock()
 
         with patch("src.agents.coordinator.llm_router.generate",
-                   new_callable=AsyncMock, return_value="DATA"), \
+                   new_callable=AsyncMock, return_value="MATCH"), \
              patch("src.agents.coordinator.init_db"), \
              patch("src.agents.coordinator.audit.log_interaction",
                    new_callable=AsyncMock, return_value=2):
-            result = await coord.process("Quantas transações temos?")
+            result = await coord.process("Rankeie os top 5 por score")
 
-        assert result.roteamento == "DATA"
-        assert "data" in result.agentes_utilizados
-        assert result.detalhes_agentes[0]["dados"]["total"] == 50
+        assert result.roteamento == "MATCH"
+        assert "match" in result.agentes_utilizados
+        assert result.detalhes_agentes[0]["dados"]["total"] == 5
         assert result.provider_utilizado == "ollama"

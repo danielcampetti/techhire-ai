@@ -1,4 +1,4 @@
-"""Knowledge agent — wraps the Phase 1 RAG pipeline."""
+"""Resume agent — answers questions about candidate resumes using RAG."""
 from __future__ import annotations
 
 from typing import Optional
@@ -8,23 +8,32 @@ from src.llm import llm_router
 from src.retrieval.prompt_builder import build_prompt
 from src.retrieval.query_engine import retrieve
 
-_KNOWLEDGE_KEYWORDS = (
-    "resolução", "circular", "artigo", "normativo", "regulamentação",
-    "lgpd", "compliance", "pld", "coaf", "bacen", "bcb", "cmn",
-    "cibersegurança", "segurança cibernética", "prazo", "obrigação",
-    "política", "disposição", "inciso", "parágrafo",
+_RESUME_KEYWORDS = (
+    "candidato", "candidata", "candidatos", "candidatas",
+    "currículo", "curriculo", "currículos", "curriculos",
+    "perfil", "perfis",
+    "experiência", "experiencia", "experiências", "experiencias",
+    "formação", "formacao", "formações", "formacoes",
+    "habilidades", "skills", "competências", "competencias",
+    "histórico", "historico",
+    "educação", "educacao",
+    "certificação", "certificacao", "certificações",
+    "cargo", "função", "funcao",
+    "trabalhou", "trabalha", "atuou", "atua",
+    "conhece", "conhecimento",
+    "senior", "sênior", "pleno", "junior", "júnior",
 )
 
 
-class KnowledgeAgent:
-    """Agent specialized in regulatory document search and analysis."""
+class ResumeAgent:
+    """Agent specialized in answering questions about candidate resumes via RAG."""
 
-    name = "knowledge"
+    name = "resume"
 
     def can_handle(self, question: str) -> float:
         """Return confidence score (0–1) for handling this question."""
         q = question.lower()
-        hits = sum(1 for kw in _KNOWLEDGE_KEYWORDS if kw in q)
+        hits = sum(1 for kw in _RESUME_KEYWORDS if kw in q)
         return min(hits * 0.2, 1.0)
 
     async def answer(
@@ -33,7 +42,7 @@ class KnowledgeAgent:
         provider: str = "ollama",
         conversation_history: Optional[list[dict]] = None,
     ) -> AgentResponse:
-        """Retrieve relevant chunks and generate an answer.
+        """Retrieve relevant resume chunks and generate an answer.
 
         Args:
             question: Natural language question in Portuguese.
@@ -48,7 +57,7 @@ class KnowledgeAgent:
         if not chunks:
             return AgentResponse(
                 agent_name=self.name,
-                answer="Nenhum documento relevante encontrado para esta pergunta.",
+                answer="Nenhum currículo relevante encontrado para esta pergunta.",
                 confidence=0.0,
             )
 
@@ -72,9 +81,9 @@ class KnowledgeAgent:
         question: str,
         conversation_history: Optional[list[dict]] = None,
     ) -> tuple[str | None, list]:
-        """Retrieve chunks and build prompt without calling the LLM.
+        """Retrieve resume chunks and build prompt without calling the LLM.
 
-        Use this with the streaming endpoint: it returns the assembled prompt and
+        Use this with the streaming endpoint: returns the assembled prompt and
         retrieved chunks so the caller can stream the LLM response itself.
 
         Args:

@@ -1,13 +1,13 @@
 """Embedding generation and ChromaDB vector store management.
 
 Generates dense embeddings from text chunks using Sentence Transformers
-and persists them to a local ChromaDB collection with source metadata.
+and persists them to local ChromaDB collections. Supports two collections:
+- "resumes": indexed resume chunks
+- "job_postings": indexed job posting chunks
 """
 from __future__ import annotations
 
-import re
 import uuid
-from pathlib import Path
 from typing import List, Optional
 
 import chromadb
@@ -16,79 +16,71 @@ from sentence_transformers import SentenceTransformer
 from src.config import settings
 from src.ingestion.chunker import TextChunk
 
+# Keywords for document classification
+_RESUME_KEYWORDS = (
+    "experiência", "formação", "habilidades", "profissional", "currículo",
+    "experience", "skills", "education", "professional", "resume",
+    "bacharelado", "mestrado", "doutorado", "universidade", "graduação",
+    "trabalhei", "atuei", "desenvolvi", "implementei", "liderei",
+)
+_JOB_KEYWORDS = (
+    "requisitos", "responsabilidades", "vaga", "contratação", "benefícios",
+    "requirements", "responsibilities", "job", "hiring", "benefits",
+    "buscamos", "procuramos", "oferecemos", "remuneração", "salário",
+    "candidate", "apply", "opportunity", "position",
+)
 
-def _format_number(num_raw: str) -> str:
-    """Add a thousands-separator period to a resolution number if absent.
 
-    Examples: '5274' → '5.274', '4.893' → '4.893', '3978' → '3.978'
-    """
-    if "." in num_raw:
-        return num_raw
-    if len(num_raw) >= 4:
-        return num_raw[:-3] + "." + num_raw[-3:]
-    return num_raw
-
-
-def _doc_label(filename: str) -> str:
-    """Derive a human-readable document label from a BCB PDF filename.
-
-    Supported patterns:
-    - ``res_5274_18_12_2025.pdf``  → ``Resolução CMN nº 5.274/2025``
-    - ``res_4.893_26_02_2021.pdf`` → ``Resolução CMN nº 4.893/2021``
-    - ``Circ_3978_v3_P.pdf``       → ``Circular BCB nº 3.978``
-
-    Falls back to the filename stem for unrecognized patterns.
+def classify_document(text: str) -> str:
+    """Classify a document as a resume or job posting based on keyword counts.
 
     Args:
-        filename: PDF filename (basename, with or without path).
+        text: Full document text to classify.
 
     Returns:
-        Human-readable document label string.
+        "resume" if resume keywords dominate, "job_posting" otherwise.
     """
-    stem = Path(filename).stem
-
-    m = re.match(r"res_([\d.]+)_\d{2}_\d{2}_(\d{4})", stem, re.IGNORECASE)
-    if m:
-        num, year = _format_number(m.group(1)), m.group(2)
-        return f"Resolução CMN nº {num}/{year}"
-
-    m = re.match(r"Circ_(\d+)", stem, re.IGNORECASE)
-    if m:
-        return f"Circular BCB nº {_format_number(m.group(1))}"
-
-    return stem
+    lower = text.lower()
+    resume_hits = sum(1 for kw in _RESUME_KEYWORDS if kw in lower)
+    job_hits = sum(1 for kw in _JOB_KEYWORDS if kw in lower)
+    return "resume" if resume_hits >= job_hits else "job_posting"
 
 
 def _get_client() -> chromadb.PersistentClient:
     return chromadb.PersistentClient(path=settings.chroma_db_path)
 
 
-def _get_collection(client: chromadb.PersistentClient) -> chromadb.Collection:
+def _get_collection(
+    client: chromadb.PersistentClient,
+    collection_name: Optional[str] = None,
+) -> chromadb.Collection:
+    name = collection_name or settings.collection_name
     return client.get_or_create_collection(
-        name=settings.collection_name,
+        name=name,
         metadata={"hnsw:space": "cosine"},
     )
 
 
-def index_chunks(chunks: List[TextChunk]) -> int:
+def index_chunks(
+    chunks: List[TextChunk],
+    collection_name: Optional[str] = None,
+) -> int:
     """Embed a list of text chunks and store them in ChromaDB.
 
     Args:
         chunks: TextChunk objects to embed and index.
+        collection_name: Target ChromaDB collection. Defaults to
+            settings.collection_name ("resumes").
 
     Returns:
         Number of chunks successfully indexed.
     """
     model = SentenceTransformer(settings.embedding_model)
     client = _get_client()
-    collection = _get_collection(client)
+    collection = _get_collection(client, collection_name)
 
     texts = [c.content for c in chunks]
-    # Prefix each text with its document label so the embedding space aligns
-    # query mentions of "Resolução CMN nº X.XXX/YYYY" with the right chunks.
-    # The original clean text is stored in ChromaDB; only the embedding changes.
-    embedding_texts = [f"[{_doc_label(c.filename)}] {c.content}" for c in chunks]
-    raw = model.encode(embedding_texts, show_progress_bar=True)
+    raw = model.encode(texts, show_progress_bar=True)
     embeddings = raw.tolist() if hasattr(raw, "tolist") else list(raw)
     ids = [str(uuid.uuid4()) for _ in chunks]
     metadatas = [c.metadata for c in chunks]
@@ -102,18 +94,22 @@ def index_chunks(chunks: List[TextChunk]) -> int:
     return len(chunks)
 
 
-def list_indexed_documents(client: Optional[chromadb.PersistentClient] = None) -> List[dict]:
+def list_indexed_documents(
+    client: Optional[chromadb.PersistentClient] = None,
+    collection_name: Optional[str] = None,
+) -> List[dict]:
     """Return one metadata record per unique source document in the collection.
 
     Args:
         client: Optional pre-existing ChromaDB client (creates new one if not provided).
+        collection_name: Target collection. Defaults to settings.collection_name.
 
     Returns:
         List of metadata dicts, one per unique source file.
     """
     if client is None:
         client = _get_client()
-    collection = _get_collection(client)
+    collection = _get_collection(client, collection_name)
     result = collection.get(include=["metadatas"])
 
     seen: dict[str, dict] = {}

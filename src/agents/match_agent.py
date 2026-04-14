@@ -1,4 +1,4 @@
-"""Data agent — translates natural language to SQL and interprets results."""
+"""Match agent — translates natural language to SQL and interprets candidate match results."""
 from __future__ import annotations
 
 import re
@@ -9,32 +9,54 @@ from src.database.connection import get_db
 from src.database.seed import init_db
 from src.llm import llm_router
 
-_DATA_KEYWORDS = (
-    "transação", "transações", "operação", "operações", "cliente",
-    "clientes", "valor", "espécie", "coaf", "alerta", "alertas",
-    "reportado", "não reportado", "agência", "depósito", "saque",
-    "transferência", "pix", "quantidade", "quantas", "total", "soma",
-    "média", "maior", "menor", "pep", "suspeito",
+_MATCH_KEYWORDS = (
+    "score", "scores",
+    "ranking", "rankear", "rankeie", "rankeou",
+    "aderência", "aderencia", "aderente",
+    "comparar", "compare", "comparação", "comparacao",
+    "melhor candidato", "melhores candidatos",
+    "top", "top 5", "top 10",
+    "match", "matches",
+    "nota", "pontuação", "pontuacao",
+    "classificação", "classificacao",
+    "mais qualificado", "mais qualificados",
+    "quantos candidatos", "quantas candidatas",
+    "acima de", "abaixo de",
+    "distribuição", "distribuicao",
+    "vaga", "vagas",
+    "recomendado", "recomendados",
+    "pipeline", "funil",
+    "etapa", "fase",
+    "triagem", "entrevista", "aprovado", "rejeitado",
+    "contratação", "contratacao",
 )
 
 _SCHEMA = """
 Tabelas disponíveis:
 
-transactions (id, client_name, client_cpf, transaction_type, amount, date,
-              branch, channel, reported_to_coaf, pep_flag, notes)
-  - transaction_type: 'deposito_especie', 'saque_especie', 'transferencia', 'pix'
-  - reported_to_coaf: 0 ou 1
-  - pep_flag: 0 ou 1
+candidates (id, full_name, email, phone, location, current_role,
+            experience_years, education, skills, resume_filename, created_at)
+  - skills: JSON array de strings com as habilidades do candidato
 
-alerts (id, transaction_id, alert_type, severity, description, status,
-        created_at, resolved_at)
-  - alert_type: 'pld_especie', 'pep_transaction', 'unusual_pattern', 'missing_coaf_report'
-  - severity: 'low', 'medium', 'high', 'critical'
-  - status: 'open', 'investigating', 'resolved', 'false_positive'
+job_postings (id, title, company, description, requirements,
+              desired_skills, seniority_level, work_model, salary_range, created_at)
+  - seniority_level: 'junior', 'pleno', 'senior', 'specialist'
+  - work_model: 'remote', 'hybrid', 'onsite'
+
+matches (id, candidate_id, job_posting_id, overall_score, skills_score,
+         experience_score, education_score, semantic_score, analysis, created_at)
+  - overall_score: 0.0 a 1.0 (nota geral de aderência)
+  - skills_score: 0.0 a 1.0 (match de habilidades)
+  - experience_score: 0.0 a 1.0 (aderência de experiência)
+  - education_score: 0.0 a 1.0 (aderência educacional)
+  - semantic_score: 0.0 a 1.0 (similaridade vetorial do currículo)
+
+pipeline (id, candidate_id, job_posting_id, stage, notes, updated_at)
+  - stage: 'triagem', 'entrevista', 'teste_tecnico', 'aprovado', 'rejeitado'
 """
 
 _SQL_GENERATION_PROMPT = """\
-Você é um analista de dados de compliance financeiro. Gere uma query SQL para o banco SQLite.
+Você é um analista de recrutamento e seleção. Gere uma query SQL para o banco SQLite.
 
 {schema}
 
@@ -43,13 +65,14 @@ Regras OBRIGATÓRIAS:
 2. Use aspas simples para strings.
 3. Para datas, o formato é 'YYYY-MM-DD'.
 4. Responda APENAS com a query SQL, sem nenhuma explicação, sem markdown, sem ```sql.
+5. Para rankear candidatos, use ORDER BY overall_score DESC.
 
 Pergunta: {question}
 SQL:"""
 
 _INTERPRETATION_PROMPT = """\
-Você é um analista de compliance financeiro. Interprete os dados abaixo em linguagem natural, \
-em português, de forma objetiva e técnica.
+Você é um analista de recrutamento. Interprete os dados abaixo em linguagem natural, \
+em português, de forma objetiva e profissional.
 
 Pergunta original: {question}
 
@@ -58,29 +81,35 @@ Query SQL executada: {sql}
 Resultado (até 20 primeiras linhas):
 {results}
 
-Forneça uma resposta clara e direta, citando os números relevantes. Se o resultado estiver vazio, \
-diga que nenhum registro foi encontrado.
+Forneça uma resposta clara e direta, citando nomes de candidatos e scores relevantes. \
+Se o resultado estiver vazio, diga que nenhum registro foi encontrado.
 """
 
 _SELECT_ONLY_RE = re.compile(r"^\s*SELECT\b", re.IGNORECASE)
 
 
-class DataAgent:
-    """Agent specialized in querying and analyzing compliance transaction data."""
+class MatchAgent:
+    """Agent specialized in querying and analyzing candidate match scores."""
 
-    name = "data"
+    name = "match"
 
     def can_handle(self, question: str) -> float:
+        """Return confidence score (0–1) for handling this question."""
         q = question.lower()
-        hits = sum(1 for kw in _DATA_KEYWORDS if kw in q)
+        hits = sum(1 for kw in _MATCH_KEYWORDS if kw in q)
         return min(hits * 0.2, 1.0)
 
-    async def answer(self, question: str, extra_context: str = "", provider: str = "ollama") -> AgentResponse:
-        """Query the compliance database and interpret results.
+    async def answer(
+        self,
+        question: str,
+        extra_context: str = "",
+        provider: str = "ollama",
+    ) -> AgentResponse:
+        """Query the recruitment database and interpret results.
 
         Args:
             question: Natural language question in Portuguese.
-            extra_context: Optional regulatory context from the KnowledgeAgent.
+            extra_context: Optional resume context from the ResumeAgent.
             provider: LLM backend — "ollama" (default) or "claude".
 
         Returns:

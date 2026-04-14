@@ -1,7 +1,8 @@
-"""Prompt assembly for the compliance RAG assistant.
+"""Prompt assembly for the TechHire AI recruitment assistant.
 
 Builds structured Portuguese-language prompts that instruct the LLM to
-answer based exclusively on retrieved regulatory context and cite sources.
+answer based exclusively on retrieved resume/job-posting context and
+cite candidates by name and document section.
 """
 from __future__ import annotations
 
@@ -10,26 +11,28 @@ from typing import List, Optional
 from src.retrieval.query_engine import RetrievedChunk
 
 _SYSTEM_PROMPT = """\
-Você é um assistente especializado em regulamentação financeira brasileira.
+Você é um assistente especializado em recrutamento e seleção.
+Sua função é analisar currículos, comparar candidatos com vagas, e fornecer
+insights para decisões de contratação.
 
 REGRAS OBRIGATÓRIAS:
-1. Responda com base nos trechos fornecidos abaixo e no histórico da conversa quando disponível. NUNCA invente informações.
-2. Se a resposta está nos trechos, cite o artigo e normativo exato. Exemplo: "Conforme Art. 49 da Circular 3.978..."
-3. Se a resposta NÃO está nos trechos NEM no histórico da conversa, diga: "Esta informação não foi encontrada nos documentos disponíveis."
-4. NUNCA cite artigos, valores, prazos ou normativos que não apareçam explicitamente nos trechos.
-5. Quando mencionar valores monetários, prazos ou percentuais, copie EXATAMENTE o que está nos trechos.
-6. Antes de responder, releia os trechos e verifique se sua resposta é consistente com eles.
+1. Base suas respostas EXCLUSIVAMENTE nos dados dos currículos e vagas fornecidos abaixo e no histórico da conversa quando disponível. NUNCA invente informações.
+2. Nunca invente experiências, habilidades, empresas ou datas que não estejam explicitamente nos trechos.
+3. Ao afirmar algo sobre um candidato, cite o nome do candidato e a seção do currículo. Exemplo: "Conforme o currículo de Lucas Mendes, seção Experiência..."
+4. Ao comparar candidatos, seja objetivo e use critérios mensuráveis presentes nos documentos.
+5. Mantenha confidencialidade — nunca exponha CPF ou dados pessoais sensíveis na resposta.
+6. Se a informação não estiver nos currículos ou vagas fornecidos, diga claramente: "Esta informação não foi encontrada nos documentos disponíveis."
 7. Se a pergunta se refere ao histórico desta conversa (ex: "qual foi a pergunta anterior?", "o que você disse antes?"), responda com base no histórico da conversa acima.\
 """
 
 _CONTEXT_TEMPLATE = """\
-## TRECHOS DOS DOCUMENTOS REGULATÓRIOS
+## TRECHOS DOS CURRÍCULOS / VAGAS
 
 {chunks}
 
 ---
 
-## PERGUNTA DO USUÁRIO
+## PERGUNTA DO RECRUTADOR
 
 {question}
 
@@ -38,11 +41,12 @@ _CONTEXT_TEMPLATE = """\
 ## INSTRUÇÕES
 
 Responda à pergunta acima usando as informações dos trechos fornecidos ou do histórico da conversa quando relevante.
-- Para perguntas sobre regulamentação: cite o artigo e normativo específico (ex: "Art. 9º da Resolução CMN nº 4.893")
-- Para perguntas sobre a própria conversa (ex: "qual foi a pergunta anterior?"): use o histórico da conversa acima
-- Se houver valores, prazos ou percentuais nos trechos, transcreva-os exatamente
+- Para perguntas sobre candidatos: cite o nome completo e a seção do currículo (ex: "Na seção Experiência do currículo de Ana Beatriz...")
+- Para comparações: use critérios objetivos como anos de experiência, habilidades listadas, formação
+- Para perguntas sobre a conversa anterior: use o histórico da conversa acima
+- Se houver habilidades ou tecnologias nos trechos, transcreva-as exatamente
 - Se a informação não estiver nos trechos nem no histórico, informe que não foi encontrada
-- Seja direto e objetivo na resposta\
+- Seja direto, objetivo e profissional na resposta\
 """
 
 
@@ -54,8 +58,8 @@ def build_prompt(
     """Assemble the final LLM prompt from a question, retrieved chunks, and optional prior context.
 
     Args:
-        question: The user's regulatory question (in Portuguese).
-        chunks: Retrieved and reranked document chunks with metadata.
+        question: The recruiter's question about candidates or job postings (in Portuguese).
+        chunks: Retrieved and reranked resume/job-posting chunks with metadata.
         conversation_history: Prior messages as [{"role": "user"|"assistant", "content": "..."}].
             Injected between system prompt and RAG chunks.
 

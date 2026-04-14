@@ -39,38 +39,38 @@ class TestLlmRouterStream:
             assert tokens == ["Olá", " mundo"]
 
 
-class TestKnowledgeAgentPrepare:
+class TestResumeAgentPrepare:
 
     @pytest.mark.asyncio
     async def test_prepare_returns_prompt_and_chunks(self):
         """prepare() returns (prompt_str, chunks) without calling the LLM."""
-        mock_chunks = [MagicMock(metadata={"source": "doc.pdf", "page": 1})]
-        with patch("src.agents.knowledge_agent.retrieve", return_value=mock_chunks), \
-             patch("src.agents.knowledge_agent.build_prompt", return_value="assembled prompt"):
-            from src.agents.knowledge_agent import KnowledgeAgent
-            agent = KnowledgeAgent()
-            prompt, chunks = await agent.prepare("qual o prazo?")
+        mock_chunks = [MagicMock(metadata={"source": "lucas_mendes.pdf", "page": 1})]
+        with patch("src.agents.resume_agent.retrieve", return_value=mock_chunks), \
+             patch("src.agents.resume_agent.build_prompt", return_value="assembled prompt"):
+            from src.agents.resume_agent import ResumeAgent
+            agent = ResumeAgent()
+            prompt, chunks = await agent.prepare("qual a experiência do candidato?")
             assert prompt == "assembled prompt"
             assert chunks is mock_chunks
 
     @pytest.mark.asyncio
     async def test_prepare_passes_conversation_history_to_build_prompt(self):
         """prepare() forwards conversation_history to build_prompt."""
-        mock_chunks = [MagicMock(metadata={"source": "doc.pdf", "page": 1})]
+        mock_chunks = [MagicMock(metadata={"source": "lucas_mendes.pdf", "page": 1})]
         history = [{"role": "user", "content": "anterior"}]
-        with patch("src.agents.knowledge_agent.retrieve", return_value=mock_chunks), \
-             patch("src.agents.knowledge_agent.build_prompt", return_value="p") as mock_bp:
-            from src.agents.knowledge_agent import KnowledgeAgent
-            agent = KnowledgeAgent()
+        with patch("src.agents.resume_agent.retrieve", return_value=mock_chunks), \
+             patch("src.agents.resume_agent.build_prompt", return_value="p") as mock_bp:
+            from src.agents.resume_agent import ResumeAgent
+            agent = ResumeAgent()
             await agent.prepare("question", conversation_history=history)
             mock_bp.assert_called_once_with("question", mock_chunks, conversation_history=history)
 
     @pytest.mark.asyncio
     async def test_prepare_returns_none_when_no_chunks(self):
         """prepare() returns (None, []) when retrieve finds nothing."""
-        with patch("src.agents.knowledge_agent.retrieve", return_value=[]):
-            from src.agents.knowledge_agent import KnowledgeAgent
-            agent = KnowledgeAgent()
+        with patch("src.agents.resume_agent.retrieve", return_value=[]):
+            from src.agents.resume_agent import ResumeAgent
+            agent = ResumeAgent()
             prompt, chunks = await agent.prepare("sem resultado")
             assert prompt is None
             assert chunks == []
@@ -87,22 +87,22 @@ class TestCoordinatorProcessStream:
             yield "Resposta"
 
         with patch("src.agents.coordinator.CoordinatorAgent._classify",
-                   new_callable=AsyncMock, return_value="KNOWLEDGE"), \
-             patch("src.agents.coordinator.KnowledgeAgent") as MockKA, \
+                   new_callable=AsyncMock, return_value="RESUME"), \
+             patch("src.agents.coordinator.ResumeAgent") as MockRA, \
              patch("src.agents.coordinator.llm_router") as mock_router, \
              patch("src.agents.coordinator.audit") as mock_audit, \
              patch("src.agents.coordinator.init_db"):
             mock_audit.generate_session_id.return_value = "abc12345"
             mock_audit.log_interaction = AsyncMock(return_value=1)
             mock_audit.classify_query.return_value = "public"
-            MockKA.return_value.prepare = AsyncMock(
-                return_value=("prompt text", [MagicMock(metadata={"source": "doc.pdf", "page": 1})])
+            MockRA.return_value.prepare = AsyncMock(
+                return_value=("prompt text", [MagicMock(metadata={"source": "lucas_mendes.pdf", "page": 1})])
             )
             mock_router.generate_stream = fake_token_stream
 
             coordinator = CoordinatorAgent()
             events = []
-            async for event in coordinator.process_stream("qual o prazo?"):
+            async for event in coordinator.process_stream("qual a experiência do candidato?"):
                 events.append(event)
 
         parsed = [
@@ -124,15 +124,15 @@ class TestCoordinatorProcessStream:
             yield " mundo"
 
         with patch("src.agents.coordinator.CoordinatorAgent._classify",
-                   new_callable=AsyncMock, return_value="KNOWLEDGE"), \
-             patch("src.agents.coordinator.KnowledgeAgent") as MockKA, \
+                   new_callable=AsyncMock, return_value="RESUME"), \
+             patch("src.agents.coordinator.ResumeAgent") as MockRA, \
              patch("src.agents.coordinator.llm_router") as mock_router, \
              patch("src.agents.coordinator.audit") as mock_audit, \
              patch("src.agents.coordinator.init_db"):
             mock_audit.generate_session_id.return_value = "sess1"
             mock_audit.log_interaction = AsyncMock(return_value=1)
             mock_audit.classify_query.return_value = "public"
-            MockKA.return_value.prepare = AsyncMock(return_value=("prompt", []))
+            MockRA.return_value.prepare = AsyncMock(return_value=("prompt", []))
             mock_router.generate_stream = fake_token_stream
 
             coordinator = CoordinatorAgent()
@@ -164,7 +164,7 @@ class TestStreamEndpoint:
 
         async def fake_stream(question, provider="ollama", user_id=None,
                               username=None, conversation_history=None):
-            yield 'data: {"type": "metadata", "roteamento": "KNOWLEDGE", "agentes_utilizados": ["knowledge"]}\n\n'
+            yield 'data: {"type": "metadata", "roteamento": "RESUME", "agentes_utilizados": ["resume"]}\n\n'
             yield 'data: {"type": "token", "content": "Olá"}\n\n'
             yield 'data: {"type": "done", "pii_detected": false, "data_classification": "public", "session_id": "abc", "full_response": "Olá"}\n\n'
 
@@ -222,7 +222,7 @@ class TestStreamEndpoint:
 
         async def fake_stream(question, provider="ollama", user_id=None,
                               username=None, conversation_history=None):
-            yield 'data: {"type": "metadata", "roteamento": "KNOWLEDGE", "agentes_utilizados": ["knowledge"]}\n\n'
+            yield 'data: {"type": "metadata", "roteamento": "RESUME", "agentes_utilizados": ["resume"]}\n\n'
             yield 'data: {"type": "token", "content": "Ol\u00e1"}\n\n'
             yield 'data: {"type": "done", "pii_detected": false, "data_classification": "public", "session_id": "abc", "full_response": "Ol\u00e1"}\n\n'
 
@@ -248,7 +248,7 @@ class TestStreamEndpoint:
             1,
             "assistant",
             "Olá",
-            agent_used="knowledge",
+            agent_used="resume",
             provider="ollama",
             data_classification="public",
             pii_detected=False,
@@ -261,8 +261,8 @@ class TestStreamEndpoint:
         from src.agents.coordinator import CoordinatorResponse
 
         mock_response = CoordinatorResponse(
-            pergunta="test", roteamento="KNOWLEDGE",
-            agentes_utilizados=["knowledge"], resposta_final="OK",
+            pergunta="test", roteamento="RESUME",
+            agentes_utilizados=["resume"], resposta_final="OK",
             detalhes_agentes=[], log_id=1, provider_utilizado="ollama",
             pii_detected=False, data_classification="public", session_id="x",
         )
