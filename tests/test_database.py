@@ -85,43 +85,7 @@ def test_row_factory_is_set(tmp_db):
 from src.database.seed import init_db
 
 
-def test_seed_inserts_20_candidates(tmp_db):
-    init_db()
-    with get_db() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0]
-    assert count == 20
-
-
-def test_seed_inserts_2_job_postings(tmp_db):
-    init_db()
-    with get_db() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM job_postings").fetchone()[0]
-    assert count == 2
-
-
-def test_seed_inserts_matches(tmp_db):
-    init_db()
-    with get_db() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
-    assert count == 40
-
-
-def test_seed_inserts_pipeline_entries(tmp_db):
-    init_db()
-    with get_db() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM pipeline").fetchone()[0]
-    assert count == 20
-
-
-def test_seed_is_idempotent(tmp_db):
-    init_db()
-    init_db()
-    with get_db() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0]
-    assert count == 20
-
-
-def test_seed_users_creates_analyst_and_manager(tmp_db):
+def test_init_db_creates_default_users(tmp_db):
     init_db()
     with get_db() as conn:
         users = {r["username"] for r in conn.execute("SELECT username FROM users").fetchall()}
@@ -129,19 +93,20 @@ def test_seed_users_creates_analyst_and_manager(tmp_db):
     assert "manager" in users
 
 
-def test_top_candidates_have_high_scores(tmp_db):
+def test_init_db_leaves_recruitment_tables_empty(tmp_db):
+    """Recruitment data comes exclusively from PDF uploads — init_db seeds nothing."""
     init_db()
     with get_db() as conn:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM matches WHERE overall_score >= 0.85"
-        ).fetchone()[0]
-    assert count >= 5
+        assert conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM job_postings").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM pipeline").fetchone()[0] == 0
 
 
-def test_pipeline_has_approved_candidates(tmp_db):
+def test_init_db_is_idempotent(tmp_db):
+    """Calling init_db twice must not duplicate users or raise errors."""
+    init_db()
     init_db()
     with get_db() as conn:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM pipeline WHERE stage = 'aprovado'"
-        ).fetchone()[0]
-    assert count >= 1
+        count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    assert count == 2
